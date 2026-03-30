@@ -119,10 +119,10 @@ output "subnets" {
   description = "Subnet details by VNET and subnet name"
   value = {
     for key, subnet in azurerm_subnet.subnet : key => {
-      id                = subnet.id
-      name              = subnet.name
-      address_prefixes  = subnet.address_prefixes
-      vnet_name         = subnet.virtual_network_name
+      id               = subnet.id
+      name             = subnet.name
+      address_prefixes = subnet.address_prefixes
+      vnet_name        = subnet.virtual_network_name
     }
   }
 }
@@ -276,7 +276,7 @@ output "secondary_sql_connection_string" {
 output "sql_firewall_rules" {
   description = "SQL Server firewall rule details"
   value = {
-    primary_firewall_client_ip = azurerm_mssql_firewall_rule.sql_allow_client.start_ip_address
+    primary_firewall_client_ip   = azurerm_mssql_firewall_rule.sql_allow_client.start_ip_address
     secondary_firewall_client_ip = azurerm_mssql_firewall_rule.sql_allow_client_secondary.start_ip_address
   }
 }
@@ -346,27 +346,27 @@ output "tenant_id" {
 output "infrastructure_summary" {
   description = "Comprehensive infrastructure summary for automation and scripts"
   value = {
-    primary_location       = local.primary_location
-    secondary_location     = local.secondary_location
-    primary_rg             = local.primary_rg
-    secondary_rg           = local.secondary_rg
-    
+    primary_location   = local.primary_location
+    secondary_location = local.secondary_location
+    primary_rg         = local.primary_rg
+    secondary_rg       = local.secondary_rg
+
     linux_vm = {
-      name          = azurerm_linux_virtual_machine.vm.name
-      id            = azurerm_linux_virtual_machine.vm.id
-      public_ip     = azurerm_public_ip.vm_pip.ip_address
-      private_ip    = azurerm_network_interface.nic.private_ip_address
-      location      = local.primary_location
+      name       = azurerm_linux_virtual_machine.vm.name
+      id         = azurerm_linux_virtual_machine.vm.id
+      public_ip  = azurerm_public_ip.vm_pip.ip_address
+      private_ip = azurerm_network_interface.nic.private_ip_address
+      location   = local.primary_location
     }
-    
+
     db_vms = {
-      count            = var.vm_count
-      names            = azurerm_windows_virtual_machine.db_vm[*].name
-      ids              = azurerm_windows_virtual_machine.db_vm[*].id
+      count              = var.vm_count
+      names              = azurerm_windows_virtual_machine.db_vm[*].name
+      ids                = azurerm_windows_virtual_machine.db_vm[*].id
       availability_zones = azurerm_windows_virtual_machine.db_vm[*].zone
-      public_ip        = azurerm_public_ip.db_vm_pip.ip_address
+      public_ip          = azurerm_public_ip.db_vm_pip.ip_address
     }
-    
+
     database = {
       primary_server_fqdn   = azurerm_mssql_server.sql.fully_qualified_domain_name
       secondary_server_fqdn = azurerm_mssql_server.sql_secondary.fully_qualified_domain_name
@@ -374,20 +374,20 @@ output "infrastructure_summary" {
       secondary_db_name     = azurerm_mssql_database.db_secondary.name
       admin_user            = var.admin_username
     }
-    
+
     networking = {
-      vnets                = [for name in keys(azurerm_virtual_network.vnet) : name]
-      bastion_host_name    = azurerm_bastion_host.bastion.name
-      bastion_public_ip    = azurerm_public_ip.bastion_pip.ip_address
+      vnets             = [for name in keys(azurerm_virtual_network.vnet) : name]
+      bastion_host_name = azurerm_bastion_host.bastion.name
+      bastion_public_ip = azurerm_public_ip.bastion_pip.ip_address
     }
-    
+
     storage = {
-      total_data_disks = length(azurerm_managed_disk.db_data_disk)
-      total_log_disks  = length(azurerm_managed_disk.db_log_disk)
+      total_data_disks  = length(azurerm_managed_disk.db_data_disk)
+      total_log_disks   = length(azurerm_managed_disk.db_log_disk)
       data_disk_size_gb = 1024
       log_disk_size_gb  = 512
     }
-    
+
     monitoring = {
       log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
       retention_days             = azurerm_log_analytics_workspace.law.retention_in_days
@@ -445,22 +445,22 @@ output "infrastructure_json_export" {
   description = "Export infrastructure data as JSON for downstream automation tools"
   value = jsonencode({
     deployment = {
-      timestamp  = timestamp()
+      timestamp       = timestamp()
       subscription_id = var.subscription_id
-      regions    = [local.primary_location, local.secondary_location]
+      regions         = [local.primary_location, local.secondary_location]
     }
-    
+
     compute = {
       linux_vms = [
         {
-          name         = azurerm_linux_virtual_machine.vm.name
-          resource_id  = azurerm_linux_virtual_machine.vm.id
-          public_ip    = azurerm_public_ip.vm_pip.ip_address
-          private_ip   = azurerm_network_interface.nic.private_ip_address
-          ssh_command  = "ssh ${var.admin_username}@${azurerm_public_ip.vm_pip.ip_address}"
+          name        = azurerm_linux_virtual_machine.vm.name
+          resource_id = azurerm_linux_virtual_machine.vm.id
+          public_ip   = azurerm_public_ip.vm_pip.ip_address
+          private_ip  = azurerm_network_interface.nic.private_ip_address
+          ssh_command = "ssh ${var.admin_username}@${azurerm_public_ip.vm_pip.ip_address}"
         }
       ]
-      
+
       windows_vms = [
         for i, vm in azurerm_windows_virtual_machine.db_vm : {
           name        = vm.name
@@ -470,7 +470,7 @@ output "infrastructure_json_export" {
         }
       ]
     }
-    
+
     database = {
       primary = {
         server_name = azurerm_mssql_server.sql.name
@@ -485,7 +485,7 @@ output "infrastructure_json_export" {
         resource_id = azurerm_mssql_database.db_secondary.id
       }
     }
-    
+
     network = {
       vnets = [
         for name, vnet in azurerm_virtual_network.vnet : {

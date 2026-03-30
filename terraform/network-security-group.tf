@@ -30,134 +30,27 @@ resource "azurerm_subnet_network_security_group_association" "nsg_assoc" {
 
 
 
-resource "azurerm_network_security_rule" "ssh_rule" {
+#########################################
+# NSG RULES (SCALABLE)
+#########################################
+resource "azurerm_network_security_rule" "rules" {
 
-  for_each = {
-    for key, value in azurerm_network_security_group.nsg :
-    key => value
-    if !strcontains(key, "pe-subnet") && !strcontains(key, "AzureBastionSubnet")
-  }
+  for_each = local.nsg_rule_matrix
 
-  name      = "AllowSSH"
-  priority  = 100
+  name = "${each.value.rule.name}-${each.value.nsg_key}"
+
+  priority = each.value.rule.priority
+
   direction = "Inbound"
   access    = "Allow"
   protocol  = "Tcp"
 
   source_port_range      = "*"
-  destination_port_range = "22"
+  destination_port_range = tostring(each.value.rule.port)
 
   source_address_prefixes    = [local.client_ip]
   destination_address_prefix = "*"
 
   resource_group_name         = local.primary_rg
-  network_security_group_name = each.value.name
+  network_security_group_name = each.value.nsg.name
 }
-
-
-
-
-
-resource "azurerm_network_security_rule" "rdp_rule" {
-
-  for_each = {
-    for key, value in azurerm_network_security_group.nsg :
-    key => value
-    if !strcontains(key, "pe-subnet") && !strcontains(key, "AzureBastionSubnet")
-  }
-
-  name      = "AllowRDP"
-  priority  = 120
-  direction = "Inbound"
-  access    = "Allow"
-  protocol  = "Tcp"
-
-  source_port_range      = "*"
-  destination_port_range = "3389"
-
-  source_address_prefixes    = [local.client_ip]
-  destination_address_prefix = "*"
-
-  resource_group_name         = local.primary_rg
-  network_security_group_name = each.value.name
-}
-
-
-
-
-resource "azurerm_network_security_rule" "winrm_rule" {
-
-  for_each = {
-    for key, value in azurerm_network_security_group.nsg :
-    key => value
-    if !strcontains(key, "pe-subnet") && !strcontains(key, "AzureBastionSubnet")
-  }
-
-  name      = "AllowWinRM"
-  priority  = 110
-  direction = "Inbound"
-  access    = "Allow"
-  protocol  = "Tcp"
-
-  source_port_range      = "*"
-  destination_port_range = "5986"
-
-  source_address_prefixes    = [local.client_ip]
-  destination_address_prefix = "*"
-
-  resource_group_name         = local.primary_rg
-  network_security_group_name = each.value.name
-}
- 
-
-
- 
-resource "azurerm_network_security_rule" "winrm_rule" {
-
-  for_each = {
-    for key, value in azurerm_network_security_group.nsg :
-    key => value
-    if !strcontains(key, "pe-subnet") && !strcontains(key, "AzureBastionSubnet")
-  }
-
-  name      = "AllowWinRMS"
-  priority  = 130
-  direction = "Inbound"
-  access    = "Allow"
-  protocol  = "Tcp"
-
-  source_port_range      = "*"
-  destination_port_range = "5985"
-
-  source_address_prefixes    = [local.client_ip]
-  destination_address_prefix = "*"
-
-  resource_group_name         = local.primary_rg
-  network_security_group_name = each.value.name
-}
- 
-
- resource "azurerm_network_security_rule" "winrm_rule" {
-
-  for_each = {
-    for key, value in azurerm_network_security_group.nsg :
-    key => value
-    if !strcontains(key, "pe-subnet") && !strcontains(key, "AzureBastionSubnet")
-  }
-
-  name      = "AllowWinRMS"
-  priority  = 130
-  direction = "Inbound"
-  access    = "Allow"
-  protocol  = "Tcp"
-
-  source_port_range      = "*"
-  destination_port_range = "1433"
-
-  source_address_prefixes    = [local.client_ip]
-  destination_address_prefix = "*"
-
-  resource_group_name         = local.primary_rg
-  network_security_group_name = each.value.name
-}
- 

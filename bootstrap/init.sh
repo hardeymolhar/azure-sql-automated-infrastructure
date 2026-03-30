@@ -23,7 +23,7 @@ echo -e "\e[33mImporting Existing Storage Account Configuration into new state..
 
 export MSYS_NO_PATHCONV=1
 terraform import \
-  -var-file="variables.tfvars" \
+  -var-file="terraform.tfvars" \
   azurerm_storage_account.bootstrap \
   "/subscriptions/4f6a6eb9-27d0-4ed6-a31c-2bde135e2db6/resourceGroups/rg_sb_westus_308450_2_177419938938/providers/Microsoft.Storage/storageAccounts/tfstate225222"
 

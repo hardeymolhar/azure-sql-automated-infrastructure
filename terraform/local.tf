@@ -3,6 +3,44 @@ locals {
   client_ip = chomp(data.http.client_ip.response_body)
 }
 
+locals {
+  nsg_rules = {
+    ssh = {
+      name     = "Allow-SSH"
+      port     = 22
+      priority = 100
+    }
+    winrm_https = {
+      name     = "Allow-WinRM-HTTPS"
+      port     = 5986
+      priority = 110
+    }
+    rdp = {
+      name     = "Allow-RDP"
+      port     = 3389
+      priority = 120
+    }
+    sql = {
+      name     = "Allow-SQL"
+      port     = 1433
+      priority = 140
+    }
+  }
+}
+
+locals {
+  nsg_rule_matrix = merge([
+    for nsg_key, nsg in azurerm_network_security_group.nsg : {
+      for rule_key, rule in local.nsg_rules :
+      "${nsg_key}-${rule_key}" => {
+        nsg_key = nsg_key
+        nsg     = nsg
+        rule    = rule
+      }
+      if !strcontains(nsg_key, "pe-subnet")
+    }
+  ]...)
+}
 
 locals {
 
@@ -40,7 +78,7 @@ locals {
   tertiary_rg  = length(var.rg) > 2 ? var.rg[2] : null
 
   # primary deployment location
-  primary_location = var.location[0]
+  primary_location   = var.location[0]
   secondary_location = length(var.location) > 1 ? var.location[1] : null
   tertiary_location  = length(var.location) > 2 ? var.location[2] : null
 }

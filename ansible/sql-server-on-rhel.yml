@@ -140,32 +140,4 @@
       ansible.builtin.command: dnf makecache
       changed_when: false
 
-    - name: Install sqlcmd and unixODBC development package
-      ansible.builtin.command: >
-       dnf install -y mssql-tools18 unixODBC-devel
-
-        name:
-      environment:
-        ACCEPT_EULA: "Y"
-      register: dnf_install
-      retries: 3
-      delay: 10
-      until: dnf_install.rc == 0
-
-    - name: Create database if it does not already exist
-      ansible.builtin.command:
-        argv:
-          - "{{ sqlcmd_path }}"
-          - -S
-          - localhost
-          - -U
-          - SA
-          - -P
-          - "{{ mssql_sa_password }}"
-          - -Q
-          - "IF DB_ID(N'{{ sql_database_name }}') IS NULL CREATE DATABASE [{{ sql_database_name }}];"
-      no_log: false
-
-
-
-
+    
