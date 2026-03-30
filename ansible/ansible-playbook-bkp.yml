@@ -1,0 +1,128 @@
+---
+- name: Install .NET SDK, clone repo, configure Cosmos env, and run samples
+  hosts: cosmos_vm
+  become: true
+  gather_facts: true
+
+  vars:
+    # Required: pass these via --extra-vars or vault
+    cosmos_endpoint: "{{ cosmos_endpoint | default(omit) }}"
+    cosmos_key: "{{ cosmos_key | default(omit) }}"
+    dotnet_install_url: "https://dot.net/v1/dotnet-install.sh"
+    dotnet_install_dir: "/usr/local/dotnet"
+    cosmos_repo: "https://github.com/hardeymolhar/azure-data-platform.git"
+    repo_dest: "/home/hardeymolhar/app"
+
+  pre_tasks:
+    - name: Fail if required vars are missing
+      ansible.builtin.assert:
+        that:
+          - cosmos_endpoint is not none
+          - cosmos_key is not none
+        fail_msg: >-
+          cosmos_endpoint and cosmos_key are required. Pass them with
+          --extra-vars "cosmos_endpoint=... cosmos_key=..." or use Ansible Vault.
+
+  tasks:
+    - name: Install required packages (curl, git)
+      ansible.builtin.dnf:
+        name:
+          - curl
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Download dotnet-install.sh
+      ansible.builtin.get_url:
+        url: "{{ dotnet_install_url }}"
+        dest: /tmp/dotnet-install.sh
+        mode: '0755'
+        validate_certs: yes
+
+    - name: Run dotnet-install.sh (install SDK channel 8.0)
+      ansible.builtin.command:
+        argv:
+          - /tmp/dotnet-install.sh
+          - --channel
+          - "8.0"
+          - --install-dir
+          - "{{ dotnet_install_dir }}"
+      args:
+        creates: "{{ dotnet_install_dir }}/dotnet"
+
+    - name: Create /etc/profile.d/dotnet.sh (system-wide DOTNET vars)
+      ansible.builtin.copy:
+        dest: /etc/profile.d/dotnet.sh
+        content: |
+          export DOTNET_ROOT={{ dotnet_install_dir }}
+          export PATH=$DOTNET_ROOT:$PATH
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create application directory
+      ansible.builtin.file:
+       path: "{{ repo_dest }}"
+       state: directory
+       owner: azureuser
+       group: azureuser
+       mode: '0755'
+
+
+    - name: Clone repository into {{ repo_dest }} as azureuser
+      ansible.builtin.git:
+        repo: "{{ cosmos_repo }}"
+        dest: "{{ repo_dest }}"
+        version: HEAD
+        update: yes
+        force: yes
+      become: true
+      become_user: azureuser
+   
+    - name: Create /etc/profile.d/cosmos.sh with environment variables
+      ansible.builtin.copy:
+        dest: /etc/profile.d/cosmos.sh
+        content: |
+          export COSMOS_ENDPOINT="{{ cosmos_endpoint }}"
+          export COSMOS_KEY="{{ cosmos_key }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Connect to Cosmos DB
+      ansible.builtin.shell: |
+        # ensure dotnet path is available for this non-login shell
+        source /etc/profile.d/dotnet.sh || true
+        source /etc/profile.d/cosmos.sh || true
+        dotnet clean
+        rm -rf obj bin
+        dotnet restore --no-cache
+        dotnet build --no-restore
+        dotnet run --no-build 
+      args:
+        chdir: "{{ repo_dest }}/sdk/01-establish-connection"
+      become: true
+      become_user: azureuser
+      environment:
+        DOTNET_ROOT: "{{ dotnet_install_dir }}"
+        PATH: "{{ dotnet_install_dir }}:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+
+
+
+
+    - name: Run Cosmos SDK Batch Insert
+      ansible.builtin.shell: |
+        dotnet clean
+        rm -rf obj bin
+        dotnet restore --no-cache
+        dotnet build --no-restore
+        dotnet run --no-build
+      args:
+        chdir: "{{ repo_dest }}/sdk/02-batch-inserts"
+      become: true
+      become_user: azureuser
+      environment:
+        COSMOS_ENDPOINT: "{{ cosmos_endpoint }}"
+        COSMOS_KEY: "{{ cosmos_key }}"
+        DOTNET_ROOT: "{{ dotnet_install_dir }}"
+        PATH: "{{ dotnet_install_dir }}:{{ ansible_env.PATH }}"
