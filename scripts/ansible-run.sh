@@ -2,9 +2,7 @@
 set -euo pipefail
 
 
-echo "Initializing Terraform providers..."
 
-terraform -chdir=../terraform init -upgrade
 
 echo "Fetching Terraform outputs..."
 
@@ -13,7 +11,7 @@ LIN_VM_IP=$(terraform -chdir=../terraform output -raw linux_vm_public_ip)
 
 echo "Updating Ansible inventory..."
 
-cat > ../ansible/inventory.ini <<EOT
+cat > ../ansible/inventory/inventory.ini <<EOT
 [linux_vm]
 azure-vm-01 ansible_host=$LIN_VM_IP
 
@@ -34,10 +32,23 @@ ansible_winrm_transport=ntlm
 ansible_winrm_server_cert_validation=ignore
 EOT
 
-echo "Running Ansible playbook..."
+
+echo "Initializing data disk on Windows VM..."
 ANSIBLE_CONFIG=../ansible/ansible.cfg \
 ansible-playbook \
-../ansible/sql-server-on-rhel.yml \
---ask-vault-pass
+../ansible/playbooks/win-disk-init.yml 
+
+echo "Running RHEL disk initialization playbook..."
+ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ansible-playbook \
+../ansible/playbooks/linux-disk-config.yml
+
+echo "Running SQL Server on RHEL Ansible playbook..."
+ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ansible-playbook \
+../ansible/playbooks/sql-server-on-rhel.yml
+
+
+
 
 echo "Pipeline completed successfully."

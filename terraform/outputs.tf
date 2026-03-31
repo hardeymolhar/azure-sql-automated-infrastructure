@@ -23,12 +23,12 @@ output "secondary_resource_group_name" {
 
 output "linux_vm_id" {
   description = "ID of the Linux VM"
-  value       = azurerm_linux_virtual_machine.vm.id
+  value       = azurerm_linux_virtual_machine.vm[0].id
 }
 
 output "linux_vm_name" {
   description = "Name of the Linux VM"
-  value       = azurerm_linux_virtual_machine.vm.name
+  value       = azurerm_linux_virtual_machine.vm[0].name
 }
 
 output "linux_vm_private_ip" {
@@ -53,7 +53,7 @@ output "linux_vm_fqdn" {
 
 output "linux_vm_principal_id" {
   description = "Principal ID of Linux VM's managed identity"
-  value       = azurerm_linux_virtual_machine.vm.identity[0].principal_id
+  value       = azurerm_linux_virtual_machine.vm[0].identity[0].principal_id
 }
 
 output "linux_nic_id" {
@@ -352,8 +352,8 @@ output "infrastructure_summary" {
     secondary_rg       = local.secondary_rg
 
     linux_vm = {
-      name       = azurerm_linux_virtual_machine.vm.name
-      id         = azurerm_linux_virtual_machine.vm.id
+      name       = azurerm_linux_virtual_machine.vm[0].name
+      id         = azurerm_linux_virtual_machine.vm[0].id
       public_ip  = azurerm_public_ip.vm_pip.ip_address
       private_ip = azurerm_network_interface.nic.private_ip_address
       location   = local.primary_location
@@ -410,7 +410,7 @@ output "ansible_inventory" {
       children = {
         linux_vms = {
           hosts = {
-            (azurerm_linux_virtual_machine.vm.name) = {
+            (azurerm_linux_virtual_machine.vm[0].name) = {
               ansible_host = azurerm_public_ip.vm_pip.ip_address
               private_ip   = azurerm_network_interface.nic.private_ip_address
             }
@@ -453,8 +453,8 @@ output "infrastructure_json_export" {
     compute = {
       linux_vms = [
         {
-          name        = azurerm_linux_virtual_machine.vm.name
-          resource_id = azurerm_linux_virtual_machine.vm.id
+          name        = azurerm_linux_virtual_machine.vm[0].name
+          resource_id = azurerm_linux_virtual_machine.vm[0].id
           public_ip   = azurerm_public_ip.vm_pip.ip_address
           private_ip  = azurerm_network_interface.nic.private_ip_address
           ssh_command = "ssh ${var.admin_username}@${azurerm_public_ip.vm_pip.ip_address}"

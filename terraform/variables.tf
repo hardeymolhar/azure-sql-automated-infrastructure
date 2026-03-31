@@ -9,6 +9,16 @@ variable "admin_username" {
   default     = "azureuser"
 }
 
+variable "data_disks_per_linux_vm" {
+  type    = number
+  default = 2
+}
+
+variable "log_disks_per_linux_vm" {
+  type    = number
+  default = 2
+}
+
 variable "admin_password" {
   description = "VM Admin username"
   type        = string
@@ -16,6 +26,11 @@ variable "admin_password" {
 variable "rg" {
   type        = list(string)
   description = "Resource group name"
+}
+
+variable "linux_vm_count" {
+  type    = number
+  default = 1
 }
 
 variable "vm_name" {

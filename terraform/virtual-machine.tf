@@ -1,18 +1,19 @@
 
 resource "azurerm_linux_virtual_machine" "vm" {
 
+  depends_on = [azurerm_bastion_host.bastion]
 
+  count               = var.linux_vm_count
   name                = var.vm_name
   resource_group_name = local.primary_rg
   location            = local.primary_location
   size                = var.vm_size
   admin_username      = var.admin_username
 
-  #custom_data = base64encode(templatefile("${path.module}/config-files/cloud-init.yaml", {
-  # storage_account = azurerm_storage_account.storage.name
-  ##  sas_token       = data.azurerm_storage_account_sas.script_sas.sas
-  # cosmos_endpoint = data.azurerm_cosmosdb_account.cosmos.endpoint
-  #cosmos_key      = azurerm_cosmosdb_account.cosmos.primary_key
+  #custom_data = base64encode(templatefile("${path.module}/../scripts/cloud-init-sh.yaml", {
+  #  storage_account = data.terraform_remote_state.storage.outputs.storage_account_name
+  #  sas_token       = data.azurerm_storage_account_sas.script_sas.sas
+  #  vault_password  = var.vault_password
   #}))
 
 
@@ -79,8 +80,11 @@ resource "azurerm_windows_virtual_machine" "db_vm" {
   resource_group_name = local.primary_rg
   size                = "Standard_B2ms"
 
+
   admin_username = var.admin_username
   admin_password = var.admin_password
+
+
 
   zone = tostring((count.index % 2) + 1)
 
@@ -103,4 +107,20 @@ resource "azurerm_windows_virtual_machine" "db_vm" {
     sku       = "2019-Datacenter"
     version   = "latest"
   }
+}
+
+
+
+resource "azurerm_virtual_machine_extension" "winrm" {
+  name                 = "enable-winrm"
+  virtual_machine_id   = azurerm_windows_virtual_machine.vm[0].id
+  publisher            = "Microsoft.Compute"
+  type                 = "CustomScriptExtension"
+  type_handler_version = "1.10"
+
+  settings = <<SETTINGS
+{
+  "commandToExecute": "powershell -ExecutionPolicy Bypass -Command \"winrm quickconfig -force; winrm set winrm/config/service '@{AllowUnencrypted=\\\"true\\\"}'; winrm set winrm/config/service/auth '@{Basic=\\\"true\\\"}'\""
+}
+SETTINGS
 }

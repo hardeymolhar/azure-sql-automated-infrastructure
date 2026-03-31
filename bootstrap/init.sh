@@ -42,7 +42,7 @@ terraform import \
 IMPORT_BLOCK
 
 echo -e "\e[33mPlanning Terraform deployment...\e[0m"
-terraform plan -out=tfplan -var-file=variables.tfvars --parallelism=3
+terraform plan -out=tfplan -var-file=terraform.tfvars --parallelism=3
 
 echo -e "\e[33mApplying Terraform configuration to set up backend storage...\e[0m"
 terraform apply tfplan 

@@ -1,0 +1,24 @@
+- name: Initialize data disk
+  hosts: windows
+  gather_facts: true
+  
+  tasks:
+    - name: Ensure temp directory exists
+      ansible.windows.win_file:
+        path: C:\temp
+        state: directory
+
+    - name: Copy PowerShell script
+      ansible.windows.win_copy:
+        src: ../../scripts/init-db-v2.ps1
+        dest: C:\temp\init-db-v2.ps1
+
+    - name: Execute PowerShell script safely
+      ansible.windows.win_powershell:
+        script: |
+          try {
+            & "C:\temp\init-db-v2.ps1"
+          } catch {
+            Write-Error $_
+            exit 1
+          }
