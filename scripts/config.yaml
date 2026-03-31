@@ -1,0 +1,42 @@
+#cloud-config
+
+runcmd:
+  - rpm --import https://packages.microsoft.com/keys/microsoft.asc
+
+  - curl -o /etc/yum.repos.d/mssql-server.repo https://packages.microsoft.com/config/rhel/9/mssql-server-2022.repo
+  - sed -i 's/^gpgcheck=1/gpgcheck=0/' /etc/yum.repos.d/mssql-server.repo
+  - sed -i 's/^repo_gpgcheck=1/repo_gpgcheck=0/' /etc/yum.repos.d/mssql-server.repo
+
+  - dnf clean all
+  - rm -rf /var/cache/dnf
+  - dnf makecache
+  - dnf install -y mssql-server
+
+  - ACCEPT_EULA=Y MSSQL_PID=Developer MSSQL_SA_PASSWORD="r3P1iKa5x_123" /opt/mssql/bin/mssql-conf -n setup
+  - systemctl enable mssql-server
+  - systemctl start mssql-server
+
+  # Wait for SQL to be ready
+  - until /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'r3P1iKa5x_123' -Q "SELECT 1" &>/dev/null; do sleep 7; done
+
+  - curl -o /etc/yum.repos.d/msprod.repo https://packages.microsoft.com/config/rhel/9/prod.repo
+  - sed -i 's/^gpgcheck=1/gpgcheck=0/' /etc/yum.repos.d/msprod.repo
+  - sed -i 's/^repo_gpgcheck=1/repo_gpgcheck=0/' /etc/yum.repos.d/msprod.repo
+
+  - dnf clean all
+  - dnf makecache
+  - ACCEPT_EULA=Y dnf install -y mssql-tools unixODBC-devel
+
+  - /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'r3P1iKa5x_123' -Q "IF DB_ID('Success') IS NULL CREATE DATABASE Success;"
+
+  - |
+      /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'r3P1iKa5x_123' -d Success -Q "
+      CREATE TABLE Customers (
+        CustomerID INT IDENTITY(1,1) PRIMARY KEY,
+        FirstName NVARCHAR(100),
+        LastName NVARCHAR(100),
+        Email NVARCHAR(255)
+      );
+      INSERT INTO Customers (FirstName, LastName, Email)
+      VALUES ('John','Doe','john@example.com');
+      "

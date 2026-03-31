@@ -1,0 +1,131 @@
+---
+- name: Configure Linux DB Disks (Azure Managed Disks)
+  hosts: localhost
+  connection: local
+  become: yes
+
+  vars_files:
+  - /tmp/secrets.yml
+
+  vars:
+    data_mounts:
+      - device: "/dev/disk/azure/scsi1/lun0"
+        mount: "/u02"
+      - device: "/dev/disk/azure/scsi1/lun1"
+        mount: "/u03"
+
+    log_mounts:
+      - device: "/dev/disk/azure/scsi1/lun2"
+        mount: "/u04"
+      - device: "/dev/disk/azure/scsi1/lun3"
+        mount: "/u05"
+
+  tasks:
+
+    # =========================
+    # INSTALL DEPENDENCIES (RHEL)
+    # =========================
+
+    - name: Install required packages
+      package:
+        name:
+          - xfsprogs
+          - parted
+          - python3
+        state: present
+
+    # =========================
+    # DATA DISKS
+    # =========================
+
+    - name: Create partition on data disks
+      community.general.parted:
+        device: "{{ item.device }}"
+        number: 1
+        state: present
+        part_type: primary
+        fs_type: xfs
+      loop: "{{ data_mounts }}"
+
+    - name: Check filesystem on data disks
+      command: blkid {{ item.device }}1
+      register: data_fs_check
+      failed_when: false
+      changed_when: false
+      loop: "{{ data_mounts }}"
+
+    - name: Format data disks if not formatted
+      filesystem:
+        fstype: xfs
+        dev: "{{ item.item.device }}1"
+      when: item.rc != 0
+      loop: "{{ data_fs_check.results }}"
+
+    - name: Create mount points for data disks
+      file:
+        path: "{{ item.mount }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ data_mounts }}"
+
+    - name: Get UUID for data disks
+      command: blkid -s UUID -o value {{ item.device }}1
+      register: data_uuid
+      loop: "{{ data_mounts }}"
+
+    - name: Mount data disks
+      mount:
+        path: "{{ item.item.mount }}"
+        src: "UUID={{ item.stdout }}"
+        fstype: xfs
+        opts: defaults,noatime
+        state: mounted
+      loop: "{{ data_uuid.results }}"
+
+    # =========================
+    # LOG DISKS
+    # =========================
+
+    - name: Create partition on log disks
+      community.general.parted:
+        device: "{{ item.device }}"
+        number: 1
+        state: present
+        part_type: primary
+        fs_type: xfs
+      loop: "{{ log_mounts }}"
+
+    - name: Check filesystem on log disks
+      command: blkid {{ item.device }}1
+      register: log_fs_check
+      failed_when: false
+      changed_when: false
+      loop: "{{ log_mounts }}"
+
+    - name: Format log disks if not formatted
+      filesystem:
+        fstype: xfs
+        dev: "{{ item.item.device }}1"
+      when: item.rc != 0
+      loop: "{{ log_fs_check.results }}"
+
+    - name: Create mount points for log disks
+      file:
+        path: "{{ item.mount }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ log_mounts }}"
+
+    - name: Get UUID for log disks
+      command: blkid -s UUID -o value {{ item.device }}1
+      register: log_uuid
+      loop: "{{ log_mounts }}"
+
+    - name: Mount log disks
+      mount:
+        path: "{{ item.item.mount }}"
+        src: "UUID={{ item.stdout }}"
+        fstype: xfs
+        opts: defaults,noatime
+        state: mounted
+      loop: "{{ log_uuid.results }}"

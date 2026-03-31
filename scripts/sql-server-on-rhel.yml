@@ -1,0 +1,171 @@
+---
+- name: Install and configure SQL Server 2022 on RHEL 9
+  hosts: linux_vm
+  become: true
+  gather_facts: true
+
+
+  vars_files:
+  - secrets.yml
+
+
+  vars:
+    mssql_server_repo_url: "https://packages.microsoft.com/config/rhel/9/mssql-server-2022.repo"
+    mssql_tools_repo_url: "https://packages.microsoft.com/config/rhel/9/prod.repo"
+
+    mssql_server_repo_file: "/etc/yum.repos.d/mssql-server.repo"
+    mssql_tools_repo_file: "/etc/yum.repos.d/msprod.repo"
+
+    mssql_setup_marker: "/var/opt/mssql/.ansible_mssql_setup_done"
+
+    mssql_sa_password: "{{ vault_mssql_sa_password }}"
+    mssql_pid: "Developer"
+    sql_database_name: "Success"
+
+    sqlcmd_path: "/opt/mssql-tools18/bin/sqlcmd"
+  
+
+
+  tasks:
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+  
+    - name: Open port 1433 with firewalld
+      ansible.posix.firewalld:
+        port: 1433/tcp
+        permanent: true
+        state: enabled
+        immediate: yes
+      when: "'firewalld.service' in ansible_facts.services"
+
+
+    - name: Import Microsoft GPG key
+      ansible.builtin.rpm_key:
+        state: present
+        key: "https://packages.microsoft.com/keys/microsoft.asc"
+
+    - name: Download SQL Server repository file
+      ansible.builtin.get_url:
+        url: "{{ mssql_server_repo_url }}"
+        dest: "{{ mssql_server_repo_file }}"
+        mode: "0644"
+
+    - name: Disable GPG checks in SQL Server repo file to match script
+      ansible.builtin.replace:
+        path: "{{ mssql_server_repo_file }}"
+        regexp: "^gpgcheck=1"
+        replace: "gpgcheck=0"
+
+    - name: Disable repo GPG checks in SQL Server repo file to match script
+      ansible.builtin.replace:
+        path: "{{ mssql_server_repo_file }}"
+        regexp: "^repo_gpgcheck=1"
+        replace: "repo_gpgcheck=0"
+
+    - name: Clean DNF cache
+      ansible.builtin.command: dnf clean all
+      changed_when: false
+
+    - name: Remove DNF cache directory
+      ansible.builtin.file:
+        path: /var/cache/dnf
+        state: absent
+
+    - name: Refresh package metadata
+      ansible.builtin.command: dnf makecache
+      changed_when: false
+
+    - name: Install SQL Server package
+      ansible.builtin.dnf:
+        name: mssql-server
+        state: present
+        update_cache: true
+
+    - name: Check whether SQL Server setup has already been completed
+      ansible.builtin.stat:
+        path: "{{ mssql_setup_marker }}"
+      register: mssql_setup_done
+
+    - name: Configure SQL Server
+      ansible.builtin.command: /opt/mssql/bin/mssql-conf -n setup
+      environment:
+        ACCEPT_EULA: "Y"
+        MSSQL_PID: "{{ mssql_pid }}"
+        MSSQL_SA_PASSWORD: "{{ mssql_sa_password }}"
+      when: not mssql_setup_done.stat.exists
+      no_log: false
+
+    - name: Create SQL Server setup marker
+      ansible.builtin.file:
+        path: "{{ mssql_setup_marker }}"
+        state: touch
+        mode: "0600"
+      when: not mssql_setup_done.stat.exists
+
+    - name: Enable and start SQL Server service
+      ansible.builtin.systemd:
+        name: mssql-server
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Wait for SQL Server to listen on port 1433
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 1433
+        delay: 5
+        timeout: 300
+
+    - name: Download Microsoft tools repository file
+      ansible.builtin.get_url:
+        url: "{{ mssql_tools_repo_url }}"
+        dest: "{{ mssql_tools_repo_file }}"
+        mode: "0644"
+
+    - name: Disable GPG checks in tools repo file to match script
+      ansible.builtin.replace:
+        path: "{{ mssql_tools_repo_file }}"
+        regexp: "^gpgcheck=1"
+        replace: "gpgcheck=0"
+
+    - name: Disable repo GPG checks in tools repo file to match script
+      ansible.builtin.replace:
+        path: "{{ mssql_tools_repo_file }}"
+        regexp: "^repo_gpgcheck=1"
+        replace: "repo_gpgcheck=0"
+
+    - name: Refresh package metadata after adding tools repo
+      ansible.builtin.command: dnf makecache
+      changed_when: false
+
+    - name: Install sqlcmd and unixODBC development package
+      ansible.builtin.command: >
+       dnf install -y mssql-tools18 unixODBC-devel
+
+        name:
+      environment:
+        ACCEPT_EULA: "Y"
+      register: dnf_install
+      retries: 3
+      delay: 10
+      until: dnf_install.rc == 0
+
+    - name: Create database if it does not already exist
+      ansible.builtin.command:
+        argv:
+          - "{{ sqlcmd_path }}"
+          - -S
+          - localhost
+          - -U
+          - SA
+          - -P
+          - "{{ mssql_sa_password }}"
+          - -Q
+          - "IF DB_ID(N'{{ sql_database_name }}') IS NULL CREATE DATABASE [{{ sql_database_name }}];"
+      no_log: false
+
+
+
+

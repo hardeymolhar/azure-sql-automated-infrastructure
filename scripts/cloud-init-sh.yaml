@@ -1,0 +1,48 @@
+#cloud-config
+
+package_update: true
+
+packages:
+  - ansible-core
+  - curl
+  - python3-pip
+  - xfsprogs
+
+runcmd:
+  - echo "Starting disk configuration setup"
+
+  # Wait for data disks (not just OS disk)
+  - |
+    echo "Waiting for data disks..."
+    for i in {1..30}; do
+      DISK_COUNT=$(lsblk -dn -o TYPE | grep -c disk)
+      if [ "$DISK_COUNT" -gt 1 ]; then
+        echo "Data disks detected"
+        break
+      fi
+      sleep 5
+    done
+
+  # Download playbook
+  - |
+    curl -f -L \
+    -o /tmp/linux-disk-config.yml \
+    "https://${storage_account}.blob.core.windows.net/scripts/local-host-disk-config.yaml?${sas_token}"
+
+  # Download encrypted secrets
+  - |
+    curl -f -L \
+    -o /tmp/secrets.yml \
+    "https://${storage_account}.blob.core.windows.net/scripts/secrets.yml?${sas_token}"
+
+  # Create vault password file (REQUIRED)
+  - |
+    echo "${vault_password}" > /tmp/.vault_pass.txt
+    chmod 600 /tmp/.vault_pass.txt
+
+  # Run playbook
+  - |
+    ansible-playbook /tmp/local-host-disk-config.yaml \
+      --vault-password-file /tmp/.vault_pass.txt \
+      -i "localhost," \
+      -c local
