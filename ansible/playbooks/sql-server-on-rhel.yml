@@ -4,10 +4,8 @@
   become: true
   gather_facts: true
 
-
   vars_files:
-  - secrets.yml
-
+    - secrets.yml
 
   vars:
     mssql_server_repo_url: "https://packages.microsoft.com/config/rhel/9/mssql-server-2022.repo"
@@ -23,23 +21,18 @@
     sql_database_name: "Success"
 
     sqlcmd_path: "/opt/mssql-tools18/bin/sqlcmd"
-  
-
 
   tasks:
-
     - name: Gather service facts
       ansible.builtin.service_facts:
 
-  
     - name: Open port 1433 with firewalld
       ansible.posix.firewalld:
         port: 1433/tcp
         permanent: true
         state: enabled
-        immediate: yes
+        immediate: true
       when: "'firewalld.service' in ansible_facts.services"
-
 
     - name: Import Microsoft GPG key
       ansible.builtin.rpm_key:
@@ -139,5 +132,3 @@
     - name: Refresh package metadata after adding tools repo
       ansible.builtin.command: dnf makecache
       changed_when: false
-
-    

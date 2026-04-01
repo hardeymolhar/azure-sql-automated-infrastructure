@@ -1,0 +1,14 @@
+# .ansible-lint - Used by both CLI and VS Code
+---
+profile: moderate
+
+exclude_paths:
+  - .cache/
+  - .git/
+  - collections/
+
+skip_list:
+  - yaml[line-length]
+
+warn_list:
+  - experimental

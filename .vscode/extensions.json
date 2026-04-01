@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "redhat.ansible",
+        "redhat.vscode-yaml",
+        "ms-python.python",
+        "editorconfig.editorconfig",
+        "mhutchie.git-graph",
+        "eamodio.gitlens"
+    ]
+}
