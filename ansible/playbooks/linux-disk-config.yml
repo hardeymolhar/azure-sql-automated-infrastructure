@@ -10,7 +10,7 @@
   tasks:
     - name: Install required packages
       package:
-        name: 
+        name:
           - xfsprogs
           - util-linux
         state: present
@@ -57,7 +57,7 @@
           filesystem:
             fstype: xfs
             dev: "/dev/{{ item.name }}1"
-            force: yes
+            force: true
           loop: "{{ disks[:2] }}"
 
         - name: Mount data disks
@@ -88,7 +88,7 @@
           filesystem:
             fstype: xfs
             dev: "/dev/{{ item.name }}1"
-            force: yes
+            force: true
           loop: "{{ disks[2:4] }}"
 
         - name: Mount log disks
@@ -108,7 +108,7 @@
         path: "{{ item }}"
         owner: mssql
         group: mssql
-        mode: '0755'
+        mode: "0755"
         state: directory
       loop: "{{ data_mount_points + log_mount_points }}"
       when: ansible_user_id | int == 0

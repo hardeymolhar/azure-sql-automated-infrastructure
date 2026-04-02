@@ -113,14 +113,19 @@ resource "azurerm_windows_virtual_machine" "db_vm" {
 
 resource "azurerm_virtual_machine_extension" "winrm" {
   name                 = "enable-winrm"
-  virtual_machine_id   = azurerm_windows_virtual_machine.vm[0].id
+  virtual_machine_id   = azurerm_windows_virtual_machine.db_vm[0].id
   publisher            = "Microsoft.Compute"
   type                 = "CustomScriptExtension"
   type_handler_version = "1.10"
 
-  settings = <<SETTINGS
-{
-  "commandToExecute": "powershell -ExecutionPolicy Bypass -Command \"winrm quickconfig -force; winrm set winrm/config/service '@{AllowUnencrypted=\\\"true\\\"}'; winrm set winrm/config/service/auth '@{Basic=\\\"true\\\"}'\""
-}
-SETTINGS
+  settings = jsonencode({
+    commandToExecute = <<EOT
+  powershell -ExecutionPolicy Bypass -Command "$ruleName = 'WinRM-Restricted-Custom'; $ip = '${local.client_ip}/32'; Start-Sleep -Seconds 30; if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -RemoteAddress $ip -Profile Any } else { Set-NetFirewallRule -DisplayName $ruleName -Enabled True; Get-NetFirewallRule -DisplayName $ruleName | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress $ip }"
+  EOT
+  })
+
+  depends_on = [
+    azurerm_windows_virtual_machine.db_vm[0],
+    azurerm_network_interface.db_nic
+  ]
 }

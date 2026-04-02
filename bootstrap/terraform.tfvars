@@ -7,6 +7,6 @@ location = [
 ]
 
 
-rg = ["rg_sb_eastus_308450_1_177505352449",
-  "rg_sb_westus_308450_2_177505352533",
-"rg_sb_centralindia_308450_3_177505352729"]
+rg = ["rg_sb_eastus_308450_1_177514317858",
+  "rg_sb_westus_308450_2_177514317960",
+"rg_sb_centralindia_308450_3_177514318087"]

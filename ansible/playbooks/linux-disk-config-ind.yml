@@ -6,7 +6,7 @@
   vars:
     data_mount_points: ["/u02", "/u03"]
     log_mount_points: ["/u04", "/u05"]
-    force_wipe: false  # Set to true only if you want to override safeguards
+    force_wipe: false # Set to true only if you want to override safeguards
 
   tasks:
     - name: Pre-flight safeguards
@@ -23,7 +23,7 @@
           debug:
             msg: "WARNING: /dev/{{ item.item.name }} already has a filesystem. Set force_wipe=true to override."
           loop: "{{ blkid_check.results }}"
-          when: 
+          when:
             - blkid_check.results is defined
             - "'xfs' in item.stdout or 'ext4' in item.stdout"
 
@@ -38,7 +38,7 @@
 
     - name: Install required packages
       package:
-        name: 
+        name:
           - xfsprogs
           - util-linux
           - e2fsprogs-libs
@@ -60,7 +60,7 @@
       copy:
         src: /etc/fstab
         dest: "/etc/fstab.backup.{{ ansible_date_time.iso8601_basic_short }}"
-        remote_src: yes
+        remote_src: true
       when: ansible_user_id | int == 0
 
     - name: Partition and format data disks
@@ -75,7 +75,7 @@
           shell: |
             wipefs -a /dev/{{ item.item.name }} || true
           loop: "{{ partition_stat.results }}"
-          when: 
+          when:
             - item.stat.exists
             - force_wipe | bool
           changed_when: false
@@ -111,7 +111,7 @@
           filesystem:
             fstype: xfs
             dev: "/dev/{{ item.item.name }}1"
-            force: yes
+            force: true
           loop: "{{ fs_type_check.results }}"
           when: item.stdout != "xfs"
 
@@ -167,7 +167,7 @@
           filesystem:
             fstype: xfs
             dev: "/dev/{{ item.item.name }}1"
-            force: yes
+            force: true
           loop: "{{ log_fs_type_check.results }}"
           when: item.stdout != "xfs"
 
@@ -205,10 +205,10 @@
         path: "{{ item }}"
         owner: mssql
         group: mssql
-        mode: '0755'
+        mode: "0755"
         state: directory
       loop: "{{ data_mount_points + log_mount_points }}"
-      when: 
+      when:
         - ansible_user_id | int == 0
         - mssql_user_check.ansible_facts.getent_passwd.mssql is defined
 

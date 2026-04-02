@@ -4,3 +4,5 @@
 crash.log
 .venv
 collections
+*.tfstate
+*.tfstate.backup

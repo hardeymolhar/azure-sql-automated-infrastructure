@@ -11,7 +11,7 @@ LIN_VM_IP=$(terraform -chdir=../terraform output -raw linux_vm_public_ip)
 
 echo "Updating Ansible inventory..."
 
-cat > ../ansible/inventory/inventory.ini <<EOT
+cat > ../ansible/inventory.ini <<EOT
 [linux_vm]
 azure-vm-01 ansible_host=$LIN_VM_IP
 
@@ -33,20 +33,20 @@ ansible_winrm_server_cert_validation=ignore
 EOT
 
 
-echo "Initializing data disk on Windows VM..."
-ANSIBLE_CONFIG=../ansible/ansible.cfg \
-ansible-playbook \
-../ansible/playbooks/win-disk-init.yml 
-
 echo "Running RHEL disk initialization playbook..."
 ANSIBLE_CONFIG=../ansible/ansible.cfg \
 ansible-playbook \
-../ansible/playbooks/linux-disk-config.yml
+../ansible/playbooks/linux-disk-config-ind.yml
 
 echo "Running SQL Server on RHEL Ansible playbook..."
 ANSIBLE_CONFIG=../ansible/ansible.cfg \
 ansible-playbook \
 ../ansible/playbooks/sql-server-on-rhel.yml
+
+echo "Initializing Data and Log Disks..."
+ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ansible-playbook \
+../ansible/playbooks/win-disk-init.yml
 
 
 
