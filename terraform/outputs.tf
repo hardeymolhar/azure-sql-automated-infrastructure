@@ -227,24 +227,26 @@ output "secondary_sql_server_fqdn" {
 
 output "primary_database_id" {
   description = "ID of the primary SQL Database"
-  value       = azurerm_mssql_database.db.id
+  value       = azurerm_mssql_database.db[*].id
 }
 
 output "primary_database_name" {
   description = "Name of the primary SQL Database"
-  value       = azurerm_mssql_database.db.name
+  value       = azurerm_mssql_database.db[*].name
 }
 
+/*
 output "secondary_database_id" {
   description = "ID of the secondary SQL Database (replica)"
   value       = azurerm_mssql_database.db_secondary.id
 }
 
+
 output "secondary_database_name" {
   description = "Name of the secondary SQL Database"
   value       = azurerm_mssql_database.db_secondary.name
 }
-
+*/
 output "sql_admin_username" {
   description = "SQL Server administrator username"
   value       = var.admin_username
@@ -257,21 +259,29 @@ output "sql_admin_username" {
 
 output "primary_sql_connection_string" {
   description = "JDBC connection string for primary SQL Database"
-  value       = "jdbc:sqlserver://${azurerm_mssql_server.sql.fully_qualified_domain_name}:1433;database=${azurerm_mssql_database.db.name};user=${var.admin_username}@${azurerm_mssql_server.sql.name};password=${var.admin_password};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;"
-  sensitive   = true
+  value = [
+    for db in azurerm_mssql_database.db :
+  "jdbc:sqlserver://${azurerm_mssql_server.sql.fully_qualified_domain_name}:1433;database=${db.name};user=${var.admin_username}@${azurerm_mssql_server.sql.name};password=${var.admin_password};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;"]
+  sensitive = true
 }
 
 output "primary_sql_connection_string_ado" {
   description = "ADO.NET connection string for primary SQL Database"
-  value       = "Server=tcp:${azurerm_mssql_server.sql.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${var.admin_username};Password=${var.admin_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
-  sensitive   = true
+  value = [
+    for db in azurerm_mssql_database.db :
+    "Server=tcp:${azurerm_mssql_server.sql.fully_qualified_domain_name},1433;Initial Catalog=${db.name};Persist Security Info=False;User ID=${var.admin_username};Password=${var.admin_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  ]
+  sensitive = true
 }
 
+
+/*
 output "secondary_sql_connection_string" {
   description = "JDBC connection string for secondary SQL Database (read-only replica)"
   value       = "jdbc:sqlserver://${azurerm_mssql_server.sql_secondary.fully_qualified_domain_name}:1433;database=${azurerm_mssql_database.db_secondary.name};user=${var.admin_username}@${azurerm_mssql_server.sql_secondary.name};password=${var.admin_password};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;"
   sensitive   = true
 }
+*/
 
 output "sql_firewall_rules" {
   description = "SQL Server firewall rule details"
@@ -289,6 +299,8 @@ output "log_analytics_workspace_id" {
   description = "ID of the Log Analytics Workspace"
   value       = azurerm_log_analytics_workspace.law.id
 }
+
+
 
 output "log_analytics_workspace_name" {
   description = "Name of the Log Analytics Workspace"
@@ -312,6 +324,8 @@ output "log_analytics_secondary_key" {
   sensitive   = true
 }
 
+
+/*
 output "diagnostic_settings" {
   description = "Diagnostic settings configured for SQL databases"
   value = {
@@ -319,6 +333,8 @@ output "diagnostic_settings" {
     secondary_database = azurerm_monitor_diagnostic_setting.sql_db_secondary_logs.id
   }
 }
+
+*/
 
 # ========================================
 # Authentication & Security Outputs
@@ -370,8 +386,7 @@ output "infrastructure_summary" {
     database = {
       primary_server_fqdn   = azurerm_mssql_server.sql.fully_qualified_domain_name
       secondary_server_fqdn = azurerm_mssql_server.sql_secondary.fully_qualified_domain_name
-      primary_db_name       = azurerm_mssql_database.db.name
-      secondary_db_name     = azurerm_mssql_database.db_secondary.name
+      primary_db_name       = azurerm_mssql_database.db[*].name
       admin_user            = var.admin_username
     }
 
@@ -475,15 +490,17 @@ output "infrastructure_json_export" {
       primary = {
         server_name = azurerm_mssql_server.sql.name
         fqdn        = azurerm_mssql_server.sql.fully_qualified_domain_name
-        database    = azurerm_mssql_database.db.name
-        resource_id = azurerm_mssql_database.db.id
+        database    = azurerm_mssql_database.db[*].name
+        resource_id = azurerm_mssql_database.db[*].id
       }
+      /*
       secondary = {
         server_name = azurerm_mssql_server.sql_secondary.name
         fqdn        = azurerm_mssql_server.sql_secondary.fully_qualified_domain_name
         database    = azurerm_mssql_database.db_secondary.name
         resource_id = azurerm_mssql_database.db_secondary.id
       }
+      */
     }
 
     network = {

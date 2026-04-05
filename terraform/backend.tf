@@ -1,7 +1,7 @@
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_westus_308450_2_177514317960"
+    resource_group_name  = "rg_sb_centralindia_308450_3_177539887862"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "azuresql.tfstate"

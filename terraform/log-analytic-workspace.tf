@@ -10,7 +10,7 @@ resource "azurerm_log_analytics_workspace" "law" {
 
 resource "azurerm_monitor_diagnostic_setting" "sql_db_logs" {
   name                       = "sql-db-diagnostics"
-  target_resource_id         = azurerm_mssql_database.db.id
+  target_resource_id         = azurerm_mssql_database.db[*].id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
 
   enabled_log {
@@ -23,6 +23,9 @@ resource "azurerm_monitor_diagnostic_setting" "sql_db_logs" {
   }
 }
 
+
+
+/*
 resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_logs" {
   name                       = "sql-db-secondary-diagnostics"
   target_resource_id         = azurerm_mssql_database.db_secondary.id
@@ -37,3 +40,4 @@ resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_logs" {
     enabled  = true
   }
 }
+*/

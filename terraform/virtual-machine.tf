@@ -19,7 +19,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   admin_ssh_key {
     username   = var.admin_username
-    public_key = file("~/.ssh/dev/dev-key.pub")
+    public_key = file("~/.ssh/ssh_key/vm-key.pub")
   }
   disable_password_authentication = true
 
