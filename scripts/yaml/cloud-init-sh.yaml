@@ -1,0 +1,7 @@
+#cloud-config
+
+runcmd:
+  - echo "Downloading install script"
+  - curl -f -L -o /tmp/install_mssql.sh "https://${storage_account}.blob.core.windows.net/account/install_mssql.sh?${sas_token}"
+  - chmod +x /tmp/install_mssql.sh
+  - /bin/bash /tmp/install_mssql.sh

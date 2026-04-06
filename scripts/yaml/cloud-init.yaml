@@ -1,0 +1,8 @@
+#cloud-config
+
+runcmd:
+  - echo "Downloading secondary config"
+  - curl -f -s -S -o /tmp/config.yaml "https://${storage_account}.blob.core.windows.net/account/config.yaml?${sas_token}"
+  - cloud-init single --file /tmp/config.yaml --name cc_runcmd
+
+

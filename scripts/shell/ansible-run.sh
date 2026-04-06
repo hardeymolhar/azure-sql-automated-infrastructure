@@ -6,12 +6,12 @@ set -euo pipefail
 
 echo "Fetching Terraform outputs..."
 
-WIN_VM_IP=$(terraform -chdir=../terraform output -raw db_vm_public_ip)
-LIN_VM_IP=$(terraform -chdir=../terraform output -raw linux_vm_public_ip)
+WIN_VM_IP=$(terraform -chdir=../../terraform output -raw db_vm_public_ip)
+LIN_VM_IP=$(terraform -chdir=../../terraform output -raw linux_vm_public_ip)
 
 echo "Updating Ansible inventory..."
 
-cat > ../ansible/inventory.ini <<EOT
+cat > ../../ansible/inventory.ini <<EOT
 [linux_vm]
 azure-vm-01 ansible_host=$LIN_VM_IP
 
@@ -34,19 +34,19 @@ EOT
 
 
 echo "Running RHEL disk initialization playbook..."
-ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ANSIBLE_CONFIG=../../ansible/ansible.cfg \
 ansible-playbook \
-../ansible/playbooks/linux-disk-config-ind.yml
+../../ansible/playbooks/linux-disk-config-ind.yml
 
 echo "Running SQL Server on RHEL Ansible playbook..."
-ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ANSIBLE_CONFIG=../../ansible/ansible.cfg \
 ansible-playbook \
-../ansible/playbooks/sql-server-on-rhel.yml
+../../ansible/playbooks/sql-server-on-rhel.yml
 
 echo "Initializing Data and Log Disks..."
-ANSIBLE_CONFIG=../ansible/ansible.cfg \
+ANSIBLE_CONFIG=../../ansible/ansible.cfg \
 ansible-playbook \
-../ansible/playbooks/win-disk-init.yml
+../../ansible/playbooks/win-disk-init.yml
 
 
 
