@@ -35,6 +35,14 @@ resource "azurerm_key_vault" "kv" {
   soft_delete_retention_days = 7
   purge_protection_enabled   = true
 
+  public_network_access_enabled = true
+  network_acls {
+    default_action = "Allow"
+
+    ip_rules = ["${local.client_ip}"]
+    bypass   = "AzureServices"
+  }
+
   enabled_for_deployment          = true # Allows VMs to pull secrets during provisioning
   enabled_for_template_deployment = true # Allows ARM templates to access Key Vault
   enabled_for_disk_encryption     = true # Allows Azure Disk Encryption to access Key Vault for encrypting VM disks
@@ -50,6 +58,9 @@ resource "azurerm_key_vault_access_policy" "sql_policy" {
     "WrapKey",
     "UnwrapKey"
   ]
+  depends_on = [
+    azurerm_mssql_server.sql
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "sql_secondary_policy" {
@@ -61,6 +72,9 @@ resource "azurerm_key_vault_access_policy" "sql_secondary_policy" {
     "Get",
     "WrapKey",
     "UnwrapKey"
+  ]
+  depends_on = [
+    azurerm_mssql_server.sql_secondary
   ]
 }
 
@@ -94,6 +108,9 @@ resource "azurerm_key_vault_access_policy" "terraform_policy" {
     "GetRotationPolicy",
     "SetRotationPolicy"
   ]
+
+  secret_permissions      = ["Get", "List", "Set", "Delete", "Recover", "Backup", "Restore", "Purge"]
+  certificate_permissions = ["Get", "List", "Create", "Update", "Delete", "Recover", "Backup", "Restore", "Purge"]
 }
 
 resource "azurerm_key_vault_key" "sql_key" {
@@ -112,6 +129,15 @@ resource "azurerm_key_vault_key" "sql_key" {
     expire_after         = "P90D"
     notify_before_expiry = "P15D"
   }
+  depends_on = [
+    azurerm_key_vault_access_policy.terraform_policy
+  ]
+}
+
+resource "azurerm_key_vault_secret" "ssh_private_key" {
+  name         = "vm-ssh-private-key"
+  value        = file("~/.ssh/ssh_key/vm-key")
+  key_vault_id = azurerm_key_vault.kv.id
 }
 
 
@@ -130,6 +156,7 @@ resource "azurerm_mssql_server_transparent_data_encryption" "tde_key" {
   key_vault_key_id = azurerm_key_vault_key.sql_key.id
 
   depends_on = [
+    azurerm_key_vault_key.sql_key,
     azurerm_key_vault_access_policy.sql_policy,
     azurerm_key_vault_access_policy.sql_secondary_policy
   ]
@@ -141,6 +168,7 @@ resource "azurerm_mssql_server_transparent_data_encryption" "tde_key_secondary" 
   key_vault_key_id = azurerm_key_vault_key.sql_key.id
 
   depends_on = [
+    azurerm_key_vault_key.sql_key,
     azurerm_key_vault_access_policy.sql_policy,
     azurerm_key_vault_access_policy.sql_secondary_policy
   ]

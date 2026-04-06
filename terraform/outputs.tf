@@ -514,3 +514,11 @@ output "infrastructure_json_export" {
     }
   })
 }
+
+
+output "terraform_identity" {
+  value = {
+    object_id = data.azurerm_client_config.current.object_id
+    tenant_id = data.azurerm_client_config.current.tenant_id
+  }
+}

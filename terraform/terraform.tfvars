@@ -8,9 +8,10 @@ location = [
 ]
 
 
-rg = ["rg_sb_eastus_308450_1_177539887563",
-  "rg_sb_centralindia_308450_3_177539887862",
-"rg_sb_westus_308450_2_177539887671"]
+
+rg = ["rg_sb_eastus_308450_1_177543369315",
+  "rg_sb_centralindia_308450_3_177543369631",
+"rg_sb_westus_308450_2_177543369415"]
 
 
 admin_password = "r3P1iKa5x_123"

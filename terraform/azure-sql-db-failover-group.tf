@@ -29,6 +29,8 @@ resource "azurerm_mssql_server" "sql" {
   identity {
     type = "SystemAssigned"
   }
+
+
 }
 
 
@@ -55,6 +57,7 @@ resource "azurerm_mssql_server" "sql_secondary" {
   identity {
     type = "SystemAssigned"
   }
+
 }
 
 

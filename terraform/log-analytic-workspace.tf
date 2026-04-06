@@ -9,8 +9,14 @@ resource "azurerm_log_analytics_workspace" "law" {
 
 
 resource "azurerm_monitor_diagnostic_setting" "sql_db_logs" {
-  name                       = "sql-db-diagnostics"
-  target_resource_id         = azurerm_mssql_database.db[*].id
+
+  for_each = {
+    for idx, db in azurerm_mssql_database.db :
+    idx => db.id
+  }
+
+  name                       = "sql-db-diag-${each.key}"
+  target_resource_id         = each.value
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
 
   enabled_log {
