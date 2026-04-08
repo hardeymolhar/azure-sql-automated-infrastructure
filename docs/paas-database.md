@@ -1,4 +1,4 @@
-# Design and Deployment of Secure Azure SQL PaaS with Private Endpoints, Customer-Managed Keys, and Cross-Region High Availability
+# Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability 
 
 
 ## 🔴 Problem OverView
@@ -68,4 +68,107 @@ flowchart LR
 
 ## 🏗️ System Architecture
 
-The architecture implements a secure, private, and highly available Azure SQL deployment across primary and secondary regions to meet defined RTO/RPO targets.
+
+``` mermaid
+flowchart LR
+
+    subgraph Client Layer
+        P[Python Workload Simulator]
+    end
+
+    subgraph Network Layer
+        PE_SQL[Private Endpoint SQL]
+        PE_KV[Private Endpoint Key Vault]
+    end
+
+    subgraph Security Layer
+        KV[Key Vault]
+    end
+
+    subgraph Primary Region
+        FG[Failover Group Endpoint]
+        SQLP[SQL Primary]
+    end
+
+    subgraph Secondary Region
+        SQLS[SQL Secondary]
+    end
+
+    subgraph Observability
+        AM[Azure Monitor]
+        LA[Log Analytics Workspace]
+        WB[Workbooks and Alerts]
+    end
+
+    P --> PE_SQL
+    P --> PE_KV
+
+    PE_SQL --> FG
+    FG --> SQLP
+    SQLP -->|Geo Replication| SQLS
+
+    SQLP -->|CMK| KV
+    PE_KV --> KV
+
+    P --> AM
+    SQLP --> AM
+    SQLS --> AM
+    KV --> AM
+
+    AM --> LA
+    LA --> WB
+
+```
+
+
+## 🧪 High Availability Design Rationale
+
+This architecture intentionally combines Failover Groups and Active Geo-Replication within the same Azure SQL environment to evaluate their operational behavior and recovery characteristics.
+
+The environment provisions 20 databases:
+
+- 10 databases use Failover Groups for automated failover and managed replication  
+- 10 databases use Active Geo-Replication with manually managed secondary databases  
+
+This design enables direct comparison of failover behavior, recovery time, and operational complexity across both models.
+
+
+## 🔐 Security and Encryption (Key Vault + CMK)
+
+To meet security and compliance requirements, the architecture implements Transparent Data Encryption (TDE) using Customer-Managed Keys (CMK) stored in Azure Key Vault.
+
+### Key Components
+
+| Component | Role |
+|----------|------|
+| Azure SQL Server | Encrypts data at rest |
+| Managed Identity | Authenticates SQL Server to Key Vault |
+| Key Vault | Secure storage for encryption keys |
+| Customer-Managed Key (CMK) | Used for TDE encryption |
+
+---
+
+### 🔑 Encryption Flow
+
+```mermaid
+flowchart LR
+    SQL[Azure SQL Server] --> MI[Managed Identity]
+    MI --> KV[Key Vault]
+    KV --> KEY[Customer Managed Key]
+    KEY --> SQL
+```
+
+
+
+## 🚧 Next Phase: Workload Simulation and Validation
+
+The next phase of this project will introduce a Python-based workload simulator to validate the behavior of the architecture under real-world conditions.
+
+This will include:
+
+- continuous data ingestion and query execution
+- failover testing across regions
+- measurement of recovery time against defined RTO (15–30 minutes)
+- evaluation of data consistency against RPO (≤ 5 minutes)
+
+Results from this phase will be used to assess the effectiveness of the implemented high availability and security design.
