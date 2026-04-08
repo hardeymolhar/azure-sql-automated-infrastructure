@@ -1,7 +1,7 @@
 # Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability 
 
 
-## 🔴 Problem OverView
+## 🔴 Problem Overview
 
 In banking and fintech payment systems, a database outage is not just a technical incident; it is a
 
@@ -10,6 +10,7 @@ In banking and fintech payment systems, a database outage is not just a technica
 - and a trust problem.
 
  A single-region SQL deployment with public access and manual recovery introduces three serious risks:
+ 
 | Risk                | Description          | Business Impact             |
 | ------------------- | -------------------- | --------------------------- |
 | Downtime            | No high availability | Transactions stop           |
@@ -35,9 +36,9 @@ flowchart TD
 ```
 
 
-## 🎯 Design Objective
+## 🎯 Engineering Objective
 
-Design a secure, highly available Azure SQL platform that:
+Design and Deploy a secure, highly available Azure SQL platform that:
 
 - meets RTO (15–30 min) and RPO (≤ 5 min) targets
 - eliminates public exposure through private connectivity
@@ -120,8 +121,21 @@ flowchart LR
 
 ```
 
+## 🌍 Region Selection (RPO/RTO Driven)
 
-## 🧪 High Availability Design Rationale
+| Role             | Region         |
+|------------------|---------------|
+| Primary          | Central India |
+| Secondary        | South India   |
+
+**Trade-off Consideration**
+
+| Option                          | Impact                              |
+|---------------------------------|-------------------------------------|
+| Nearby regions (chosen)         | Better RPO, faster RTO              |
+| Distant regions (e.g., India → Europe) | Higher latency → worse RPO |
+
+## 🧪 Replication Strategy (Failover Groups / Geo-Replication)
 
 This architecture intentionally combines Failover Groups and Active Geo-Replication within the same Azure SQL environment to evaluate their operational behavior and recovery characteristics.
 
