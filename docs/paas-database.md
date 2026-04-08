@@ -135,6 +135,23 @@ flowchart LR
 | Nearby regions (chosen)         | Better RPO, faster RTO              |
 | Distant regions (e.g., India → Europe) | Higher latency → worse RPO |
 
+
+
+##  🔌 Connection Policy Selection
+
+| Policy   | Connectivity Model                  | Network Requirement              | Performance | Suitability for Banking Environment |
+|----------|------------------------------------|----------------------------------|------------|-------------------------------------|
+| Proxy ✅ | Gateway-only (port 1433)           | Minimal (single port)            | Lower      | ✅ Best fit (controlled, compliant)  |
+| Redirect | Direct to database node            | Requires ports 11000–11999 open  | High       | ❌ Not suitable (breaks lockdown)    |
+| Default  | Redirect → Proxy fallback          | Depends on environment           | Variable   | ⚠️ Unpredictable behavior           |
+
+---
+
+**Decision:**  
+Proxy was intentionally selected to enforce **strict network control and deterministic connectivity**, ensuring alignment with real-world banking security constraints where dynamic port access is restricted.
+
+
+
 ## 🧪 Replication Strategy (Failover Groups / Geo-Replication)
 
 This architecture intentionally combines Failover Groups and Active Geo-Replication within the same Azure SQL environment to evaluate their operational behavior and recovery characteristics.
