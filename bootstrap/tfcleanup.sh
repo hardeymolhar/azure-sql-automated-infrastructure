@@ -11,6 +11,33 @@ cd "$PROJECT_ROOT"
 
 echo "Running cleanup from project root: $PROJECT_ROOT"
 
+
+sed -i '/^rg = \[/,/^]/d' bootstrap/terraform.tfvars
+
+
+
+sed -i '/^rg = \[/,/^]/d' terraform/terraform.tfvars
+
+awk '
+/data[[:space:]]+"terraform_remote_state"[[:space:]]+"storage"[[:space:]]*{/ {
+  in_block=1
+}
+
+in_block && /config[[:space:]]*=[[:space:]]*{/ {
+  depth=1
+  while (depth > 0 && getline) {
+    depth += gsub(/{/, "{")
+    depth -= gsub(/}/, "}")
+  }
+  next
+}
+
+{ print }
+' terraform/data.tf > tmp.tf && mv tmp.tf terraform/data.tf
+
+
+
+
 # Remove Terraform artifacts across project
 find . -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
 find . -type f -name "terraform.tfstate" -delete 2>/dev/null || true
