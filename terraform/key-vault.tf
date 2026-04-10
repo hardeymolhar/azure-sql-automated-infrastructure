@@ -25,6 +25,16 @@ STEPS TO SWITCHING TDE PROTECTOR FROM MICROSOFT MANAGED KEY (MMK) TO KEY VAULT K
 3. Key Vault returns the unwrapped DEK to SQL
 */
 
+
+resource "time_sleep" "wait_for_identity" {
+  depends_on = [
+    azurerm_mssql_server.sql,
+    azurerm_mssql_server.sql_secondary
+  ]
+
+  create_duration = "90s"
+}
+
 resource "azurerm_key_vault" "kv" {
   name                = "kv-${random_string.suffix.result}"
   location            = local.primary_location
@@ -59,7 +69,8 @@ resource "azurerm_key_vault_access_policy" "sql_policy" {
     "UnwrapKey"
   ]
   depends_on = [
-    azurerm_mssql_server.sql
+    azurerm_mssql_server.sql,
+    time_sleep.wait_for_identity
   ]
 }
 
@@ -74,7 +85,8 @@ resource "azurerm_key_vault_access_policy" "sql_secondary_policy" {
     "UnwrapKey"
   ]
   depends_on = [
-    azurerm_mssql_server.sql_secondary
+    azurerm_mssql_server.sql_secondary,
+    time_sleep.wait_for_identity
   ]
 }
 
@@ -111,6 +123,8 @@ resource "azurerm_key_vault_access_policy" "terraform_policy" {
 
   secret_permissions      = ["Get", "List", "Set", "Delete", "Recover", "Backup", "Restore", "Purge"]
   certificate_permissions = ["Get", "List", "Create", "Update", "Delete", "Recover", "Backup", "Restore", "Purge"]
+
+  depends_on = [time_sleep.wait_for_identity]
 }
 
 resource "azurerm_key_vault_key" "sql_key" {
@@ -138,6 +152,8 @@ resource "azurerm_key_vault_secret" "ssh_private_key" {
   name         = "vm-ssh-private-key"
   value        = file("~/.ssh/ssh_key/vm-key")
   key_vault_id = azurerm_key_vault.kv.id
+
+  depends_on = [azurerm_key_vault_access_policy.terraform_policy]
 }
 
 

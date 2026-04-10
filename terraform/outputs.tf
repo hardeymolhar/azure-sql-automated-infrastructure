@@ -522,3 +522,8 @@ output "terraform_identity" {
     tenant_id = data.azurerm_client_config.current.tenant_id
   }
 }
+
+
+output "debug_nsg_rule_matrix" {
+  value = local.nsg_rule_matrix
+}

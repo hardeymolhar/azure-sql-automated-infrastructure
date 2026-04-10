@@ -3,28 +3,76 @@ locals {
   client_ip = chomp(data.http.client_ip.response_body)
 }
 
+
+
+locals {
+  network_structure = {
+    dev-vnet = {
+      address_space = ["10.1.0.0/16"]
+
+      subnets = {
+        app-subnet = {
+          address_prefix = ["10.1.1.0/24"]
+        }
+
+        pe-subnet = {
+          address_prefix = ["10.1.3.0/24"]
+        }
+      }
+    }
+  }
+}
+
 locals {
   nsg_rules = {
     ssh = {
-      name     = "Allow-SSH"
-      port     = 22
-      priority = 100
+      name        = "Allow-SSH"
+      port        = 22
+      priority    = 100
+      direction   = "Inbound"
+      source      = "client_ip"
+      destination = "app_subnet"
+      target_nsgs = ["dev-vnet-app-subnet"]
     }
-    winrm_https = {
-      name     = "Allow-WinRM-HTTPS"
-      port     = 5985
-      priority = 110
+
+    winrm_http = {
+      name        = "Allow-WinRM-HTTP"
+      port        = 5985
+      priority    = 110
+      direction   = "Inbound"
+      source      = "client_ip"
+      destination = "app_subnet"
+      target_nsgs = ["dev-vnet-app-subnet"]
     }
+
     rdp = {
-      name     = "Allow-RDP"
-      port     = 3389
-      priority = 120
+      name        = "Allow-RDP"
+      port        = 3389
+      priority    = 120
+      direction   = "Inbound"
+      source      = "client_ip"
+      destination = "app_subnet"
+      target_nsgs = ["dev-vnet-app-subnet"]
     }
+
     sql = {
-      name     = "Allow-SQL"
-      port     = 1433
-      priority = 140
+      name        = "Allow-SQL"
+      port        = 1433
+      direction   = "Outbound"
+      source      = "app_subnet"
+      destination = "pe_subnet"
+      priority    = 140
+      target_nsgs = ["dev-vnet-app-subnet"]
+
     }
+  }
+}
+
+locals {
+  cidr_map = {
+    app_subnet = local.network_structure["dev-vnet"].subnets["app-subnet"].address_prefix[0]
+    pe_subnet  = local.network_structure["dev-vnet"].subnets["pe-subnet"].address_prefix[0]
+    client_ip  = local.client_ip
   }
 }
 
@@ -37,8 +85,7 @@ locals {
         nsg     = nsg
         rule    = rule
       }
-      if !strcontains(nsg_key, "pe-subnet")
-    }
+    if contains(rule.target_nsgs, nsg_key) }
   ]...)
 }
 

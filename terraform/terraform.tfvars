@@ -9,10 +9,6 @@ location = [
 
 
 
-rg = ["rg_sb_eastus_308450_1_177543369315",
-  "rg_sb_centralindia_308450_3_177543369631",
-"rg_sb_westus_308450_2_177543369415"]
-
 
 admin_password = "r3P1iKa5x_123"
 
@@ -42,3 +38,8 @@ network_structure = {
     }
   }
 }
+
+
+rg = ["rg_sb_eastus_308450_1_17757760695",
+  "rg_sb_centralindia_308450_3_177577607257",
+"rg_sb_westus_308450_2_177577607093"]

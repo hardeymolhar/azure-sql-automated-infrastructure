@@ -30,7 +30,7 @@ resource "azurerm_mssql_server" "sql" {
     type = "SystemAssigned"
   }
 
- connection_policy = "Proxy"
+  connection_policy = "Proxy"
 
 }
 
@@ -59,7 +59,7 @@ resource "azurerm_mssql_server" "sql_secondary" {
     type = "SystemAssigned"
   }
 
- connection_policy = "Proxy"
+  connection_policy = "Proxy"
 }
 
 
