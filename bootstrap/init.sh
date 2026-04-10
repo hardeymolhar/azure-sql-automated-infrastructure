@@ -12,15 +12,15 @@ echo -e "\e[33mUpdating Terraform variables...\e[0m"
 
 
 cat <<EOF >> ../terraform/terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_177570415651",
-  "rg_sb_centralindia_308450_3_177570416050",
-"rg_sb_westus_308450_2_177570415890"]
+rg = ["rg_sb_eastus_308450_1_17757760695",
+  "rg_sb_centralindia_308450_3_177577607257",
+"rg_sb_westus_308450_2_177577607093"]
 EOF
 
 cat <<EOF >> terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_177570415651",
-  "rg_sb_centralindia_308450_3_177570416050",
-"rg_sb_westus_308450_2_177570415890"]
+rg = ["rg_sb_eastus_308450_1_17757760695",
+  "rg_sb_centralindia_308450_3_177577607257",
+"rg_sb_westus_308450_2_177577607093"]
 EOF
 
 
@@ -71,7 +71,7 @@ cat <<EOF > backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177570416050"
+    resource_group_name  = "rg_sb_centralindia_308450_3_177577607257"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "bootstrap.tfstate"
@@ -91,7 +91,7 @@ cat <<EOF > ../terraform/backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177570416050"
+    resource_group_name  = "rg_sb_centralindia_308450_3_177577607257"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "azuresql.tfstate"
@@ -105,7 +105,7 @@ awk '
   print
   print ""
   print "  config = {"
-  print "    resource_group_name  = \"rg_sb_centralindia_308450_3_177567567019\""
+  print "    resource_group_name  = \"rg_sb_centralindia_308450_3_177577607257\""
   print "    storage_account_name = \"tfstate225222\""
   print "    container_name       = \"terraform-state-files\""
   print "    key                  = \"bootstrap.tfstate\""

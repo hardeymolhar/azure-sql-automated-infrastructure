@@ -36,6 +36,28 @@ in_block && /config[[:space:]]*=[[:space:]]*{/ {
 ' terraform/data.tf > tmp.tf && mv tmp.tf terraform/data.tf
 
 
+awk '
+/^terraform[[:space:]]*{/ {skip=1; depth=1; next}
+skip {
+    depth += gsub(/{/, "{")
+    depth -= gsub(/}/, "}")
+    if (depth == 0) skip=0
+    next
+}
+{print}
+' bootstrap/backend.tf > tmp.tf && mv tmp.tf bootstrap/backend.tf
+
+
+awk '
+/^terraform[[:space:]]*{/ {skip=1; depth=1; next}
+skip {
+    depth += gsub(/{/, "{")
+    depth -= gsub(/}/, "}")
+    if (depth == 0) skip=0
+    next
+}
+{print}
+' terraform/backend.tf > tmp.tf && mv tmp.tf terraform/backend.tf
 
 
 # Remove Terraform artifacts across project
