@@ -67,6 +67,44 @@ flowchart LR
     F --> I[Data Protection]
 ```
 
+## User Impact
+
+This diagram shows how key engineering decisions translate into measurable user and business outcomes.
+
+``` mermaid
+flowchart LR
+
+    subgraph Engineering Decisions
+        A1[Failover Groups]
+        A2[Geo-Replication]
+        A3[Private Endpoints]
+        A4[Proxy Connection Policy]
+        A5[Key Vault + CMK]
+    end
+
+    subgraph System Effects
+        B1[Automatic Failover]
+        B2[Data Replication]
+        B3[Network Isolation]
+        B4[Controlled Connectivity]
+        B5[Data Encryption]
+    end
+
+    subgraph User Impact
+        C1[Minimal Downtime]
+        C2[No Data Loss]
+        C3[Secure Transactions]
+        C4[Consistent Access]
+        C5[Regulatory Compliance]
+    end
+
+    A1 --> B1 --> C1
+    A2 --> B2 --> C2
+    A3 --> B3 --> C3
+    A4 --> B4 --> C4
+    A5 --> B5 --> C5
+```
+
 ## 🏗️ System Architecture
 
 
