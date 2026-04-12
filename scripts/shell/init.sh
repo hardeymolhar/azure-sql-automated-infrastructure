@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve bootstrap directory
-INIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve shell directory
+INIT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 
 cd "$INIT_DIR"
@@ -11,24 +11,24 @@ cd "$INIT_DIR"
 echo -e "\e[33mUpdating Terraform variables...\e[0m"
 
 
-cat <<EOF >> ../terraform/terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_17757760695",
-  "rg_sb_centralindia_308450_3_177577607257",
-"rg_sb_westus_308450_2_177577607093"]
+cat <<EOF >> ../../terraform/terraform.tfvars
+rg = ["rg_sb_eastus_308450_1_177598821180",
+  "rg_sb_centralindia_308450_3_177598821421",
+"rg_sb_westus_308450_2_177598821322"]
 EOF
 
-cat <<EOF >> terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_17757760695",
-  "rg_sb_centralindia_308450_3_177577607257",
-"rg_sb_westus_308450_2_177577607093"]
+cat <<EOF >> ../../bootstrap/terraform.tfvars
+rg = ["rg_sb_eastus_308450_1_177598821180",
+  "rg_sb_centralindia_308450_3_177598821421",
+"rg_sb_westus_308450_2_177598821322"]
 EOF
 
-
+cd ../../bootstrap
 echo -e "\e[33mInitializing Terraform without backend...\e[0m"
-terraform init --reconfigure
+terraform init  --reconfigure
 
 echo -e "\e[33mFormatting Terraform configuration files...\e[0m"
-terraform fmt -recursive
+terraform  fmt -recursive
 
 echo -e "\e[33mValidating Configuration...\e[0m"
 terraform validate
@@ -57,10 +57,10 @@ terraform import \
 IMPORT_BLOCK
 
 echo -e "\e[33mPlanning Terraform deployment...\e[0m"
-terraform plan -out=tfplan -var-file=terraform.tfvars --parallelism=3
+terraform  plan  -out=tfplan -var-file=terraform.tfvars --parallelism=3
 
 echo -e "\e[33mApplying Terraform configuration to set up backend storage...\e[0m"
-terraform apply tfplan
+terraform  apply  tfplan
 
 echo -e "\e[32mStorage account for Terraform state has been set up successfully.\e[0m"
 
@@ -71,7 +71,7 @@ cat <<EOF > backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177577607257"
+    resource_group_name  = "rg_sb_centralindia_308450_3_177598821421"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "bootstrap.tfstate"
@@ -83,7 +83,7 @@ EOF
 
 
 echo -e "\e[33mInitializing Bootstrap with the new backend...\e[0m"
-terraform init --upgrade
+terraform  init  --upgrade
 
 
 
@@ -91,7 +91,7 @@ cat <<EOF > ../terraform/backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177577607257"
+    resource_group_name  = "rg_sb_centralindia_308450_3_177598821421"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "azuresql.tfstate"
@@ -105,7 +105,7 @@ awk '
   print
   print ""
   print "  config = {"
-  print "    resource_group_name  = \"rg_sb_centralindia_308450_3_177577607257\""
+  print "    resource_group_name  = \"rg_sb_centralindia_308450_3_177598821421\""
   print "    storage_account_name = \"tfstate225222\""
   print "    container_name       = \"terraform-state-files\""
   print "    key                  = \"bootstrap.tfstate\""
