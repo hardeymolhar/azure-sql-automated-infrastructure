@@ -1,4 +1,4 @@
-# Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability 
+# Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability
 
 
 ## 🔴 Problem Overview
@@ -10,7 +10,7 @@ In banking and fintech payment systems, a database outage is not just a technica
 - and a trust problem.
 
  A single-region SQL deployment with public access and manual recovery introduces three serious risks:
- 
+
 | Risk                | Description          | Business Impact             |
 | ------------------- | -------------------- | --------------------------- |
 | Downtime            | No high availability | Transactions stop           |
@@ -185,7 +185,7 @@ flowchart LR
 
 ---
 
-**Decision:**  
+**Decision:**
 Proxy was intentionally selected to enforce **strict network control and deterministic connectivity**, ensuring alignment with real-world banking security constraints where dynamic port access is restricted.
 
 
@@ -196,8 +196,8 @@ This architecture intentionally combines Failover Groups and Active Geo-Replicat
 
 The environment provisions 20 databases:
 
-- 10 databases use Failover Groups for automated failover and managed replication  
-- 10 databases use Active Geo-Replication with manually managed secondary databases  
+- 10 databases use Failover Groups for automated failover and managed replication
+- 10 databases use Active Geo-Replication with manually managed secondary databases
 
 This design enables direct comparison of failover behavior, recovery time, and operational complexity across both models.
 
@@ -229,15 +229,58 @@ flowchart LR
 
 
 
-## 🚧 Next Phase: Workload Simulation and Validation
+### Workload Simulation Planning & Objectives
 
-The next phase of this project will introduce a Python-based workload simulator to validate the behavior of the architecture under real-world conditions.
+#### 🎯 Objective
 
-This will include:
+| Area                          | Description                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Data Population & Testing** | Populate a minimal set of banking tables with sample data to simulate load, measure DTU usage, and observe system behavior.                    |
+| **Security Controls**         | Apply layered protections (encryption, masking, auditing, classification) to secure sensitive data during and after testing (PCI-DSS aligned). |
 
-- continuous data ingestion and query execution
-- failover testing across regions
-- measurement of recovery time against defined RTO (15–30 minutes)
-- evaluation of data consistency against RPO (≤ 5 minutes)
 
-Results from this phase will be used to assess the effectiveness of the implemented high availability and security design.
+#### ⚙️ Approach
+
+``` mermaid
+flowchart LR
+    A[Populate Sample Data] --> B[Simulate Load & Measure DTU]
+    B --> C[Apply Security Controls]
+    C --> D[Observe Impact on Performance & Compliance]
+```
+
+#### 🔐 Security Control
+``` mermaid
+flowchart TD
+    DB[Core Banking Tables] --> AE[Always Encrypted]
+    DB --> DDM[Dynamic Data Masking]
+    DB --> AUD[Auditing]
+    DB --> DC[Data Classification]
+
+    AE --> AE1[PAN / Card Number]
+    AE --> AE2[Tokens / Sensitive IDs]
+
+    DDM --> DDM1[Email]
+    DDM --> DDM2[Phone]
+    DDM --> DDM3[Partial PAN]
+
+    AUD --> AUD1[INSERT Activity]
+    AUD --> AUD2[SELECT Access]
+
+    DC --> DC1[PII Data]
+    DC --> DC2[Cardholder Data]
+```
+
+
+#### 🔍 Control Breakdown
+
+| Control                 | What It Protects                     | Why It Matters                                   |
+| ----------------------- | ------------------------------------ | ------------------------------------------------ |
+| **Always Encrypted**    | Card numbers, tokens, sensitive data | Keeps critical data fully protected at all times |
+| **Data Masking (DDM)**  | Email, phone, partial card numbers   | Hides sensitive data from unauthorized users     |
+| **Auditing**            | User activity (reads and writes)     | Tracks who did what for security and compliance  |
+| **Data Classification** | Personal and cardholder data         | Helps identify and manage sensitive information  |
+
+
+📝 Note
+
+These controls ensure sensitive banking data is protected, controlled, and traceable, while supporting compliance requirements like PCI DSS.
