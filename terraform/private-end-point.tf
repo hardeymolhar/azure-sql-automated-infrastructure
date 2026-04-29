@@ -58,6 +58,7 @@ resource "azurerm_private_endpoint" "azuresql_pe" {
     ]
   }
   depends_on = [
-    azurerm_private_dns_zone_virtual_network_link.sql_dns_link
+    azurerm_private_dns_zone_virtual_network_link.sql_dns_link,
+    azurerm_subnet.subnet["pe-subnet"]
   ]
 }
