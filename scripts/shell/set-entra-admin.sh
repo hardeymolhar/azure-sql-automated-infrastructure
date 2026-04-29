@@ -8,12 +8,12 @@ RESOURCE_GROUP=$(az group list --query "[0].name" -o tsv)
 # 2. Get server name safely
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[2].name" \
+  --query "[0].name" \
   -o tsv)
 
 # 3. Get signed-in user details
 DISPLAY_NAME=$(az ad signed-in-user show --query userPrincipalName -o tsv)
-OBJECT_ID=$(az ad signed-in-user show --query objectId -o tsv)
+OBJECT_ID=$(az ad signed-in-user show --query "id" -o tsv)
 
 
 # 4. Set Entra admin
