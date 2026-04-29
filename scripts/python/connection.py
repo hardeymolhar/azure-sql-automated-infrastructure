@@ -3,10 +3,10 @@ import pyodbc
 try:
     conn = pyodbc.connect(
         "DRIVER={ODBC Driver 18 for SQL Server};"
-        "SERVER=sql-automated-server-benl.database.windows.net;"
-        "DATABASE=AZ500LabDb-5;"
-        "UID=azureuser;"
-        "PWD=r3P1iKa5x_123;"
+        "SERVER=sqlserver-21459.database.windows.net;"
+        "DATABASE=demo-db;"
+        "UID=sqladminuser;"
+        "PWD=r3P1iKa5x_123$;"
         "Encrypt=yes;"
         "TrustServerCertificate=no;"
         "Connection Timeout=30;"
