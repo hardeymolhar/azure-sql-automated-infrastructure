@@ -150,7 +150,7 @@ resource "azurerm_key_vault_key" "sql_key" {
 
 resource "azurerm_key_vault_secret" "ssh_private_key" {
   name         = "vm-ssh-private-key"
-  value        = file("~/.ssh/ssh_key/vm-key")
+  value = file(pathexpand("~/.ssh/ssh_key/vm-key/vm-key"))
   key_vault_id = azurerm_key_vault.kv.id
 
   depends_on = [azurerm_key_vault_access_policy.terraform_policy]

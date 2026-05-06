@@ -84,6 +84,106 @@ resource "azurerm_mssql_database" "db" {
 
 }
 
+############################################
+# SQL AUDITING - SERVER LEVEL
+############################################
+# Enables Azure SQL Auditing on both logical servers.
+# Audit events are sent to Azure Monitor and collected by
+# the diagnostic settings below.
+resource "azurerm_mssql_server_extended_auditing_policy" "sql_audit" {
+  server_id              = azurerm_mssql_server.sql.id
+  log_monitoring_enabled = true
+  retention_in_days      = 30
+}
+
+resource "azurerm_mssql_server_extended_auditing_policy" "sql_secondary_audit" {
+  server_id              = azurerm_mssql_server.sql_secondary.id
+  log_monitoring_enabled = true
+  retention_in_days      = 30
+}
+
+resource "azurerm_monitor_diagnostic_setting" "sql_server_audit_logs" {
+  name                       = "sql-server-audit-logs"
+  target_resource_id         = "${azurerm_mssql_server.sql.id}/databases/master"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "SQLSecurityAuditEvents"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+
+  depends_on = [azurerm_mssql_server_extended_auditing_policy.sql_audit]
+}
+
+resource "azurerm_monitor_diagnostic_setting" "sql_secondary_server_audit_logs" {
+  name                       = "sql-secondary-server-audit-logs"
+  target_resource_id         = "${azurerm_mssql_server.sql_secondary.id}/databases/master"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "SQLSecurityAuditEvents"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+
+  depends_on = [azurerm_mssql_server_extended_auditing_policy.sql_secondary_audit]
+}
+
+############################################
+# SQL AUDITING - DATABASE LEVEL
+############################################
+# Enables Azure SQL Auditing on each Terraform-managed database.
+resource "azurerm_mssql_database_extended_auditing_policy" "sql_db_audit" {
+  for_each = {
+    for idx, db in azurerm_mssql_database.db :
+    idx => db.id
+  }
+
+  database_id            = each.value
+  log_monitoring_enabled = true
+  retention_in_days      = 30
+}
+
+resource "azurerm_mssql_database_extended_auditing_policy" "sql_db_secondary_audit" {
+  for_each = {
+    for idx, db in azurerm_mssql_database.db_secondary :
+    idx => db.id
+  }
+
+  database_id            = each.value
+  log_monitoring_enabled = true
+  retention_in_days      = 30
+}
+
+resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_audit_logs" {
+  for_each = {
+    for idx, db in azurerm_mssql_database.db_secondary :
+    idx => db.id
+  }
+
+  name                       = "sql-db-secondary-audit-${each.key}"
+  target_resource_id         = each.value
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "SQLSecurityAuditEvents"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+
+  depends_on = [azurerm_mssql_database_extended_auditing_policy.sql_db_secondary_audit]
+}
+
 
 ############################################
 # FAILOVER GROUP
@@ -146,5 +246,4 @@ resource "azurerm_mssql_firewall_rule" "sql_allow_client_secondary" {
   start_ip_address = local.client_ip
   end_ip_address   = local.client_ip
 }
-
 
