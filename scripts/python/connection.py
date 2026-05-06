@@ -3,7 +3,7 @@ import pyodbc
 try:
     conn = pyodbc.connect(
         "DRIVER={ODBC Driver 18 for SQL Server};"
-        "SERVER=sqlserver-21459.database.windows.net;"
+        "SERVER=sqlserver-31655.database.windows.net;"
         "DATABASE=demo-db;"
         "UID=sqladminuser;"
         "PWD=r3P1iKa5x_123$;"

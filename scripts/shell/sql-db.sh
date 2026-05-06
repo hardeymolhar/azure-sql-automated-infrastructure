@@ -10,6 +10,10 @@ SERVER_NAME="sqlserver-$RANDOM"
 ADMIN_USER="sqladminuser"
 ADMIN_PASSWORD="r3P1iKa5x_123$"   # change this
 DB_NAME="demo-db"
+MY_IP=$(curl -s https://api.ipify.org)
+
+
+
 
 # 2. Create SQL Server
 az sql server create \
@@ -24,8 +28,8 @@ az sql server firewall-rule create \
   --resource-group $RESOURCE_GROUP \
   --server $SERVER_NAME \
   --name AllowMyIP \
-  --start-ip-address "196.13.161.251" \
-  --end-ip-address "196.13.161.251"
+  --start-ip-address "$MY_IP" \
+  --end-ip-address "$MY_IP"
 
 # 4. Create Database
 az sql db create \

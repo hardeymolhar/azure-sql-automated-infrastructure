@@ -12,15 +12,15 @@ echo -e "\e[33mUpdating Terraform variables...\e[0m"
 
 
 cat <<EOF >> ../../terraform/terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_177598821180",
-  "rg_sb_centralindia_308450_3_177598821421",
-"rg_sb_westus_308450_2_177598821322"]
+rg = ["rg_sb_eastus_308450_1_177797037415",
+  "rg_sb_westus_308450_2_177797037579",
+"rg_sb_centralindia_308450_3_17779703763"]
 EOF
 
 cat <<EOF >> ../../bootstrap/terraform.tfvars
-rg = ["rg_sb_eastus_308450_1_177598821180",
-  "rg_sb_centralindia_308450_3_177598821421",
-"rg_sb_westus_308450_2_177598821322"]
+rg = ["rg_sb_eastus_308450_1_177797037415",
+  "rg_sb_westus_308450_2_177797037579",
+"rg_sb_centralindia_308450_3_17779703763"]
 EOF
 
 cd ../../bootstrap
@@ -71,7 +71,7 @@ cat <<EOF > backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177598821421"
+    resource_group_name  = "rg_sb_westus_308450_2_177797037579"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "bootstrap.tfstate"
@@ -91,7 +91,7 @@ cat <<EOF > ../terraform/backend.tf
 terraform {
   backend "azurerm" {
 
-    resource_group_name  = "rg_sb_centralindia_308450_3_177598821421"
+    resource_group_name  = "rg_sb_westus_308450_2_177797037579"
     storage_account_name = "tfstate225222"
     container_name       = "terraform-state-files"
     key                  = "azuresql.tfstate"
@@ -105,7 +105,7 @@ awk '
   print
   print ""
   print "  config = {"
-  print "    resource_group_name  = \"rg_sb_centralindia_308450_3_177598821421\""
+  print "    resource_group_name  = \"rg_sb_westus_308450_2_177797037579\""
   print "    storage_account_name = \"tfstate225222\""
   print "    container_name       = \"terraform-state-files\""
   print "    key                  = \"bootstrap.tfstate\""
@@ -129,7 +129,7 @@ echo -e "\e[33mValidating Configuration...\e[0m"
 terraform validate
 
 echo -e "\e[33mPlanning Terraform deployment...\e[0m"
-terraform plan -out=tfplan -var-file=terraform.tfvars --parallelism=10
+terraform plan -out=tfplan -var-file=terraform.tfvars --parallelism=2
 
 echo -e "\e[33mApplying Terraform plan...\e[0m"
 terraform apply tfplan

@@ -13,11 +13,11 @@ cd "$PROJECT_ROOT"
 echo "Running cleanup from project root: $PROJECT_ROOT"
 
 
-sed -i '/^rg = \[/,/^]/d' bootstrap/terraform.tfvars
+sed -i '' '/^rg = \[/,/^]/d' bootstrap/terraform.tfvars
 
 
 
-sed -i '/^rg = \[/,/^]/d' terraform/terraform.tfvars
+sed -i '' '/^rg = \[/,/^]/d' terraform/terraform.tfvars
 
 awk '
 /data[[:space:]]+"terraform_remote_state"[[:space:]]+"storage"[[:space:]]*{/ {

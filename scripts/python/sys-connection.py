@@ -10,7 +10,7 @@ print(pyodbc.drivers())
 
 from azure.identity import ManagedIdentityCredential
 
-server = "sqlserver-21459.database.windows.net"
+server = "sqlserver-31655.database.windows.net"
 database = "demo-db"
 
 # Get token using Managed Identity
