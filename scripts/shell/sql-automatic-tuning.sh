@@ -10,7 +10,7 @@ set -euo pipefail
 #   RESOURCE_GROUP="my-rg" SERVER_NAME="my-server" DB_NAME="my-db" ./sql-automatic-tuning.sh
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[0].name" -o tsv)}"
-SERVER_NAME="${SERVER_NAME:-$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)}"
+SERVER_NAME="${SERVER_NAME:-$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[1].name" -o tsv)}"
 DB_NAME="${DB_NAME:-demo-db}"
 SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
 
