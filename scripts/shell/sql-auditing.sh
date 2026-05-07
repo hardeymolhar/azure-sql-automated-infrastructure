@@ -6,7 +6,7 @@ set -euo pipefail
 # Override these values when running the script if needed:
 #   RESOURCE_GROUP="my-rg" SERVER_NAME="my-server" DB_NAME="my-db" ./sql-auditing.sh
 
-RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[0].name" -o tsv)}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
 LOCATION="${LOCATION:-eastus}"
 SERVER_NAME="${SERVER_NAME:-$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)}"
 DB_NAME="${DB_NAME:-demo-db}"
@@ -40,6 +40,8 @@ if ! az monitor log-analytics workspace show \
     --location "$LOCATION"
 fi
 
+
+LAW_NAME="${LAW_NAME:-sql-audit-law}"
 LAW_RESOURCE_ID=$(az monitor log-analytics workspace show \
   --resource-group "$RESOURCE_GROUP" \
   --workspace-name "$LAW_NAME" \

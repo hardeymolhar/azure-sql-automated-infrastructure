@@ -2,39 +2,110 @@
 
 set -euo pipefail
 
-# Variables
-RESOURCE_GROUP=$(az group list --query "[0].name" -o tsv)  # Change this to your resource group if needed
+# =========================================================
+# VARIABLES
+# =========================================================
+
+RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)  # Change this to your resource group if needed
 LOCATION="eastus"
 SERVER_NAME="sqlserver-$RANDOM"
-#SERVER_NAME="sqlserver-21459"  --- IGNORE ---
-ADMIN_USER="sqladminuser"
-ADMIN_PASSWORD="r3P1iKa5x_123$"   # change this
+#SERVER_NAME="sqlserver-8622"  
 DB_NAME="demo-db"
+ADMIN_USER="sqladminuser"
+FIREWALL_RULE_NAME="AllowMyIP"
+
+# =========================================================
+# VALIDATE RESOURCE GROUP EXISTS
+# =========================================================
+
+if ! az group exists --name "$RESOURCE_GROUP" | grep -q true; then
+    echo "ERROR: Resource group '$RESOURCE_GROUP' does not exist."
+    exit 1
+
+fi
+
+# =========================================================
+# PROMPT FOR PASSWORD
+# =========================================================
+
+read -s -p "Enter SQL admin password: " ADMIN_PASSWORD
+
+printf "\n"
+
+# =========================================================
+# GET CLIENT PUBLIC IP
+# =========================================================
+
 MY_IP=$(curl -s https://api.ipify.org)
 
+if [[ -z "$MY_IP" ]]; then
+    echo "ERROR: Failed to retrieve public IP."
+    exit 1
+fi
 
 
+# =========================================================
+# STEP 1 — CREATE SQL SERVER
+# =========================================================
 
-# 2. Create SQL Server
+echo "Creating Azure SQL logical server..."
+
 az sql server create \
-  --name $SERVER_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION \
-  --admin-user $ADMIN_USER \
-  --admin-password $ADMIN_PASSWORD
+    --name "$SERVER_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" \
+    --admin-user "$ADMIN_USER" \
+    --admin-password "$ADMIN_PASSWORD"
 
-# 3. Allow your Client IP (IMPORTANT)
+
+# =========================================================
+# STEP 2 — ENABLE MANAGED IDENTITY
+# =========================================================
+
+echo "Enabling managed identity..."
+
+  az sql server update \
+    --assign_identity \
+    --name $SERVER_NAME \
+    --resource-group $RESOURCE_GROUP
+
+
+# =========================================================
+# STEP 3 — CREATE FIREWALL RULE
+# =========================================================
+
+echo "Creating firewall rule..."
+
 az sql server firewall-rule create \
-  --resource-group $RESOURCE_GROUP \
-  --server $SERVER_NAME \
-  --name AllowMyIP \
-  --start-ip-address "$MY_IP" \
-  --end-ip-address "$MY_IP"
+    --resource-group "$RESOURCE_GROUP" \
+    --server "$SERVER_NAME" \
+    --name "$FIREWALL_RULE_NAME" \
+    --start-ip-address "$MY_IP" \
+    --end-ip-address "$MY_IP"
 
-# 4. Create Database
+# =========================================================
+# STEP 4 — CREATE DATABASE
+# =========================================================
+
+echo "Creating database..."
+
 az sql db create \
-  --resource-group $RESOURCE_GROUP \
-  --server $SERVER_NAME \
-  --name $DB_NAME \
-  --service-objective Basic \
-  --max-size 2GB
+    --resource-group "$RESOURCE_GROUP" \
+    --server "$SERVER_NAME" \
+    --name "$DB_NAME" \
+    --edition Basic \
+    --max-size 2GB
+
+# =========================================================
+# COMPLETE
+# =========================================================
+
+echo ""
+
+echo "Deployment complete."
+
+echo "SQL Server : $SERVER_NAME"
+
+echo "Database   : $DB_NAME"
+
+echo "Public IP  : $MY_IP"
