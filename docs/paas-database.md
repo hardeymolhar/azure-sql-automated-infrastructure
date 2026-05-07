@@ -485,3 +485,8 @@ The regular contained database user (`db_datareader`) can query the table, but m
 Administrative users such as the Microsoft Entra administrator can view original unmasked values.
 
 ![Admin View](images/admin.png)
+
+
+
+
+Next : Implementing automatic tuning, row level security and ledger.
