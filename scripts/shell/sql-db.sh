@@ -7,11 +7,11 @@ set -euo pipefail
 # =========================================================
 
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)  # Change this to your resource group if needed
-LOCATION="eastus"
+LOCATION=$(az group show --name "$RESOURCE_GROUP" --query "location" -o tsv)
 SERVER_NAME="sqlserver-$RANDOM"
 #SERVER_NAME="sqlserver-8622"  
 DB_NAME="demo-db"
-ADMIN_USER="sqladminuser"
+ADMIN_USER="sqladmin"
 FIREWALL_RULE_NAME="AllowMyIP"
 
 # =========================================================
