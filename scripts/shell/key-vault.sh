@@ -2,7 +2,8 @@ set -euo pipefail
 
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 LOCATION="eastus"
-
+SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
+SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 KV_NAME="kv-$RANDOM"
 
 SQL_SERVER_NAME="$(
@@ -38,6 +39,11 @@ az keyvault create \
   --default-action Allow \
   --enable-rbac-authorization false
 
+az keyvault network-rule add \
+  --name "$KV_NAME" \
+  --ip-address "$CLIENT_IP"
+
+
 az keyvault set-policy \
   --name $KV_NAME \
   --object-id $SQL_MI \
@@ -69,6 +75,31 @@ az keyvault key create \
   --kty RSA \
   --size 2048 \
   --ops wrapKey unwrapKey sign verify encrypt decrypt
+
+# ==========================================
+# UPLOAD SSH PRIVATE KEY
+# ==========================================
+
+az keyvault secret set \
+  --vault-name "$KV_NAME" \
+  --name "vm-ssh-private-key" \
+  --file "$SSH_PRIVATE_KEY_PATH"
+
+# ==========================================
+# UPLOAD SSH PUBLIC KEY
+# ==========================================
+
+az keyvault secret set \
+  --vault-name "$KV_NAME" \
+  --name "vm-ssh-public-key" \
+  --file "$SSH_PUBLIC_KEY_PATH"
+
+
+
+az keyvault secret set \
+  --vault-name "$KV_NAME" \
+  --name "vm-ssh-private-key" \
+  --file ~/.ssh/id_rsa
 
 AE_KEY_ID=$(az keyvault key show \
   --vault-name $KV_NAME \
