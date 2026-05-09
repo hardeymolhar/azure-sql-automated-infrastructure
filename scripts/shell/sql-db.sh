@@ -69,6 +69,10 @@ echo "Enabling managed identity..."
     --name $SERVER_NAME \
     --resource-group $RESOURCE_GROUP
 
+SQL_MI=$(az sql server show \
+  --name $SQL_SERVER_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --query identity.principalId -o tsv)
 
 # =========================================================
 # STEP 3 — CREATE FIREWALL RULE
@@ -109,3 +113,11 @@ echo "SQL Server : $SERVER_NAME"
 echo "Database   : $DB_NAME"
 
 echo "Public IP  : $MY_IP"
+
+
+az keyvault set-policy \
+  --name $KV_NAME \
+  --object-id $SQL_MI \
+  --key-permissions get wrapKey unwrapKey
+
+

@@ -3,12 +3,10 @@ set -euo pipefail
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 LOCATION="eastus"
 
-/c/Users/P10822/azure-sql-automated-infrastructure
-
 
 #GitBash
-SSH_PRIVATE_KEY_PATH="/c/Users/P10822/.ssh/vm-key/vm-key"
-SSH_PUBLIC_KEY_PATH="/c/Users/P10822/.ssh/vm-key/vm-key.pub"
+SSH_PRIVATE_KEY_PATH="/c/Users/P10822/.ssh/vm-key"
+SSH_PUBLIC_KEY_PATH="/c/Users/P10822/.ssh/vm-key.pub"
 
 
 # SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
@@ -30,11 +28,6 @@ TENANT_ID=$(az account show --query tenantId -o tsv)
 MY_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
 
 
-SQL_MI=$(az sql server show \
-  --name $SQL_SERVER_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --query identity.principalId -o tsv)
-
 
 
 az keyvault create \
@@ -53,10 +46,7 @@ az keyvault network-rule add \
   --ip-address "$CLIENT_IP"
 
 
-az keyvault set-policy \
-  --name $KV_NAME \
-  --object-id $SQL_MI \
-  --key-permissions get wrapKey unwrapKey
+
 
 
 az keyvault set-policy \
@@ -108,7 +98,7 @@ az keyvault secret set \
 az keyvault secret set \
   --vault-name "$KV_NAME" \
   --name "vm-ssh-private-key" \
-  --file ~/.ssh/id_rsa
+  --file "$SSH_PRIVATE_KEY_PATH"
 
 AE_KEY_ID=$(az keyvault key show \
   --vault-name $KV_NAME \
