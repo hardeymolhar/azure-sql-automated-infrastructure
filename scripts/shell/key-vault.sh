@@ -13,13 +13,7 @@ SSH_PUBLIC_KEY_PATH="/c/Users/P10822/.ssh/vm-key.pub"
 # SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 KV_NAME="kv-$RANDOM"
 
-SQL_SERVER_NAME="$(
-  az sql server list \
-    --resource-group "$RESOURCE_GROUP" \
-    --query "[0].name" \
-    -o tsv)"    
 
-echo $SQL_SERVER_NAME
 
 CLIENT_IP=$(curl -s https://api.ipify.org)
 
@@ -30,16 +24,23 @@ MY_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
 
 
 
-az keyvault create \
-  --name $KV_NAME \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION \
-  --sku standard \
-  --retention-days 7 \
-  --enable-purge-protection true \
-  --public-network-access Enabled \
-  --default-action Allow \
-  --enable-rbac-authorization false
+if az keyvault show --name "$KV_NAME" >/dev/null 2>&1
+then
+    echo "Key Vault already exists: $KV_NAME"
+else
+    echo "Creating Key Vault: $KV_NAME"
+
+    az keyvault create \
+      --name "$KV_NAME" \
+      --resource-group "$RESOURCE_GROUP" \
+      --location "$LOCATION" \
+      --sku standard \
+      --retention-days 7 \
+      --enable-purge-protection true \
+      --public-network-access Enabled \
+      --default-action Allow \
+      --enable-rbac-authorization false
+fi
 
 az keyvault network-rule add \
   --name "$KV_NAME" \
@@ -60,6 +61,16 @@ az keyvault set-policy \
     get list set delete recover backup restore purge \
   --certificate-permissions \
     get list create update delete recover backup restore purge
+
+echo "Waiting for Key Vault DNS propagation..."
+
+until nslookup "${KV_NAME}.vault.azure.net" >/dev/null 2>&1
+do
+    echo "Key Vault endpoint not ready yet..."
+    sleep 10
+done
+
+echo "Key Vault endpoint resolved successfully."
 
 az keyvault key create \
   --vault-name $KV_NAME \
@@ -95,29 +106,13 @@ az keyvault secret set \
 
 
 
-az keyvault secret set \
-  --vault-name "$KV_NAME" \
-  --name "vm-ssh-private-key" \
-  --file "$SSH_PRIVATE_KEY_PATH"
-
 AE_KEY_ID=$(az keyvault key show \
   --vault-name $KV_NAME \
   --name always-encrypted-key \
   --query key.kid -o tsv)
 
-TDE_KEY_ID=$(az keyvault key show \
-  --vault-name $KV_NAME \
-  --name tde-encrypted-key \
-  --query key.kid -o tsv)
 
-az sql server key create \
-  --server "$SQL_SERVER_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --kid "$TDE_KEY_ID"
 
-az sql server tde-key set \
-  --server "$SQL_SERVER_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --server-key-type AzureKeyVault \
-  --kid "$TDE_KEY_ID"
+
+
 

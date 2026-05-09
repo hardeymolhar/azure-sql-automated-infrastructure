@@ -14,6 +14,16 @@ DB_NAME="demo-db"
 ADMIN_USER="sqladmin"
 FIREWALL_RULE_NAME="AllowMyIP"
 
+KV_NAME=$(az keyvault list \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[0].name" \
+  -o tsv)
+
+TDE_KEY_ID=$(az keyvault key show \
+  --vault-name $KV_NAME \
+  --name tde-encrypted-key \
+  --query key.kid -o tsv)
+
 # =========================================================
 # VALIDATE RESOURCE GROUP EXISTS
 # =========================================================
@@ -56,6 +66,26 @@ az sql server create \
     --location "$LOCATION" \
     --admin-user "$ADMIN_USER" \
     --admin-password "$ADMIN_PASSWORD"
+
+az sql server key create \
+  --server "$SERVER_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --kid "$TDE_KEY_ID"
+
+SQL_SERVER_NAME="$(
+  az sql server list \
+    --resource-group "$RESOURCE_GROUP" \
+    --query "[0].name" \
+    -o tsv)"    
+
+echo $SQL_SERVER_NAME
+
+
+az sql server tde-key set \
+  --server "$SQL_SERVER_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --server-key-type AzureKeyVault \
+  --kid "$TDE_KEY_ID"
 
 
 # =========================================================
