@@ -6,9 +6,10 @@ SQL_SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
   --query "[0].name" \
   -o tsv)
-#==========================================
+
+#========================
 # FETCH EXISTING VM NAME
-# ==========================================
+# =======================
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
@@ -26,6 +27,8 @@ DATABASE_NAME="demo-db"
 ADMIN_USER=$(az ad signed-in-user show \
     --query userPrincipalName \
     -o tsv)
+
+
 # SQL Login - Prompt for password.
 # sqlcmd \
 #   -S "${SQL_SERVER_NAME}.database.windows.net" \
@@ -52,24 +55,9 @@ ADMIN_USER=$(az ad signed-in-user show \
 #   -U "your-email@tenant.com" \
 #   -N \
 #   -C
-
   
 # Entra Auth - Interactive (Azure CLI must be logged in)
-#!/bin/bash
 
-set -euo pipefail
-
-# ==========================================
-# VARIABLES
-# ==========================================
-
-RESOURCE_GROUP="your-resource-group"
-
-SQL_SERVER_NAME="your-sql-server"
-
-DATABASE_NAME="demo-db"
-
-ADMIN_USER="your-email@tenant.com"
 
 # ==========================================
 # FETCH EXISTING VM NAME

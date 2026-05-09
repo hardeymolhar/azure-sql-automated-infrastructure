@@ -2,8 +2,17 @@ set -euo pipefail
 
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 LOCATION="eastus"
-SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
-SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
+
+/c/Users/P10822/azure-sql-automated-infrastructure
+
+
+#GitBash
+SSH_PRIVATE_KEY_PATH="/c/Users/P10822/.ssh/vm-key/vm-key"
+SSH_PUBLIC_KEY_PATH="/c/Users/P10822/.ssh/vm-key/vm-key.pub"
+
+
+# SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
+# SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 KV_NAME="kv-$RANDOM"
 
 SQL_SERVER_NAME="$(
