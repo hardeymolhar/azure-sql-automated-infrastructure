@@ -230,15 +230,163 @@ flowchart LR
 
 
 
-## 🚧 Next Phase: Workload Simulation and Validation
 
-The next phase of this project will introduce a Python-based workload simulator to validate the behavior of the architecture under real-world conditions.
+#### 🔐 Security Controls
 
-This will include:
+```mermaid
+flowchart TD
+    DB[Core Banking Tables] --> AE[Always Encrypted]
+    DB --> DDM[Dynamic Data Masking]
+    DB --> AUD[Auditing]
+    DB --> DC[Data Classification]
 
-- continuous data ingestion and query execution
-- failover testing across regions
-- measurement of recovery time against defined RTO (15–30 minutes)
-- evaluation of data consistency against RPO (≤ 5 minutes)
+    AE --> AE1[PAN / Card Number]
+    AE --> AE2[Tokens / Sensitive IDs]
 
-Results from this phase will be used to assess the effectiveness of the implemented high availability and security design.
+    DDM --> DDM1[Email]
+    DDM --> DDM2[Phone]
+    DDM --> DDM3[Partial PAN]
+
+    AUD --> AUD1[INSERT Activity]
+    AUD --> AUD2[SELECT Access]
+
+    DC --> DC1[PII Data]
+    DC --> DC2[Cardholder Data]
+```
+
+
+
+## SQL Server Auditing
+
+![Auditing](docs/images/auditing.png)
+
+---
+
+## Audit Logs Verification
+
+![Auditing](docs/images/audit-logs.png)
+
+
+## Diagnostic Settings
+
+![Diagnostic Settings](docs/images/diag-settings.png)
+
+---
+
+## Data Classification
+
+![Data Classification](docs/images/data-classification.png)
+
+---
+
+## Dynamic Data Masking Demonstration
+
+Dynamic Data Masking (DDM) was applied to sensitive financial and identity-related columns to reduce unnecessary exposure of sensitive data to non-privileged users.
+
+### Regular User View
+
+The regular contained database user (`db_datareader`) can query the table, but masked columns such as account numbers, usernames, and operational secrets remain partially or fully obfuscated.
+
+![Regular User View](docs/images/regular-user.png)
+
+---
+
+### Admin User View
+
+Administrative users such as the Microsoft Entra administrator can view original unmasked values.
+
+![Admin View](docs/images/admin.png)
+
+
+### Always Encrypted
+
+This confirms that Azure SQL Always Encrypted was successfully configured by creating the Column Master Key (CMK) metadata, generating and protecting the Column Encryption Key (CEK) using Azure Key Vault through the PowerShell client, encrypting sensitive transaction columns with deterministic and randomized encryption types, and validating that protected data remains unreadable when queried directly without client-side decryption access.
+
+
+![Always Encrypted](docs/images/always-encrypted.png)
+
+
+![Always Encrypted](docs/images/encrypted-columns.png)
+
+
+![Always Encrypted](docs/images/ciphertext.png)
+
+
+## Workload Simulation and Validation
+
+This phase introduces a Python-based workload simulator to validate how the Azure SQL architecture behaves under realistic operational conditions.
+
+Ansible will be used to automate the deployment process by configuring the Azure VM, installing required drivers and dependencies, and deploying the Python workload scripts automatically.
+
+The workload simulator will then execute realistic database activities such as:
+
+* Batch inserts for high-volume transaction ingestion
+* Concurrent database operations to simulate multiple workloads
+* Large updates and deletes to test transaction log and IO behavior
+
+
+``` mermaid
+flowchart LR
+
+    A[Use Ansible to Configure Azure VM
+    Install ODBC Drivers • Python Packages • SQL Tools]
+
+    -->
+
+    B[Deploy Python Workload Scripts to the VM
+    Automated Provisioning and Execution]
+
+    -->
+
+    C[Execute Realistic Database Workloads
+    Batch Inserts • Concurrent Operations • Updates • Deletes]
+
+    -->
+
+    D[Connect Securely to Azure SQL
+    Managed Identity • Private Endpoint]
+
+    -->
+
+    E[Collect Azure SQL Metrics and Logs
+    DTU • CPU • Log IO • Data IO • Sessions]
+
+    -->
+
+    F[Analyze Database Performance,
+    Scalability, and Security Impact]
+
+```
+
+
+
+<h2>Playbooks and Automation Files</h2>
+
+<ul>
+  <li><a href="./ansible/playbooks/">Ansible Playbooks Directory</a></li>
+  <li><a href="./ansible/requirements.yml">Ansible Requirements File</a></li>
+</ul>
+
+<h2>Python Workload and Connectivity Scripts</h2>
+
+<ul>
+  <li>
+    <a href="./scripts/python/managed-identity-connection.py">
+      Establishing Connection Using Contained User With Managed Identity
+    </a>
+  </li>
+
+  <li>
+    <a href="./scripts/python/batch-inserts.py">
+      Batch Insert Workload Script
+    </a>
+  </li>
+
+  <li>
+    <a href="./scripts/python/concurrency.py">
+      Concurrency Workload Script
+    </a>
+  </li>
+</ul>
+
+

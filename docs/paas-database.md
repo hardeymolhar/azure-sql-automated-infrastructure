@@ -259,6 +259,8 @@ ALTER ROLE db_datareader ADD MEMBER [user@domain.com];
 
 ### Workload Simulation Planning & Objectives
 
+
+
 #### 🎯 Objective
 
 | Area                          | Description                                                                                     |
@@ -272,9 +274,28 @@ ALTER ROLE db_datareader ADD MEMBER [user@domain.com];
 
 ```mermaid
 flowchart LR
-    A[Apply Security Controls] --> B[Populate Sample Data]
-    B --> C[Simulate Load & Measure DTU]
-    C --> D[Observe Performance & Compliance Impact]
+
+    A[Apply Security Controls<br/>DDM • Always Encrypted • Private Endpoint • Managed Identity]
+
+    --> 
+
+    B[Deploy Python Workload Runner via Ansible<br/>Configure VM • Install Drivers • Push Scripts]
+
+    --> 
+
+    C[Generate Realistic Financial Transactions<br/>Batch Inserts • Large Insert & Updates • Concurrency Transactions]
+
+    --> 
+
+    D[Connect Securely to Azure SQL via Private Endpoint<br/>Managed Identity • ODBC Driver 18 • Token-Based Auth]
+
+    --> 
+
+    E[Monitor Azure SQL Performance Metrics<br/>DTU • CPU • Log IO • Data IO • Sessions]
+
+    --> 
+
+    F[Evaluate Security vs Performance Tradeoffs<br/>Encryption Overhead • Transaction Throughput • Compliance Impact]
 ```
 
 ---
@@ -489,4 +510,12 @@ Administrative users such as the Microsoft Entra administrator can view original
 
 
 
-Next : Implementing automatic tuning, row level security and ledger.
+### Secure Encryption Setup
+
+Verified that sensitive database information is protected using Azure Always Encrypted technology.
+
+* Encryption keys were successfully configured
+* Azure Key Vault is securely storing the encryption keys
+* The database is correctly connected to the encryption system
+
+![Admin View](images/always-encrypted.png)
