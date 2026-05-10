@@ -9,16 +9,17 @@ set -euo pipefail
 RESOURCE_GROUP="$(az group list --query "[1].name" -o tsv)"
 LOCATION="$(az group list --query "[1].location" -o tsv)"
 
-VM_NAME="vm-234809"
-VNET_NAME="vnet-234809"
-SUBNET_NAME="subnet-234809"
-NSG_NAME="nsg-234809"
-NIC_NAME="nic-234809"
-PUBLIC_IP_NAME="pip-234809"
+VM_NAME="vm-2348O1"
+VNET_NAME="vnet-2348O1"
+SUBNET_NAME="subnet-2348O1"
+NSG_NAME="nsg-2348O1"
+NIC_NAME="nic-2348O1"
+PUBLIC_IP_NAME="pip-2348O1"
 
-KV_NAME="$(az keyvault list \
-  --query "[?contains(name, '-234809')].name | [0]" \
-  -o tsv)"
+KV_NAME=$(az keyvault list \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[?contains(name, '-2348O1')].name | [0]" \
+  -o tsv)
 
 SSH_SECRET_NAME="vm-ssh-public-key"
 ADMIN_USERNAME="sqladmin"
@@ -153,7 +154,14 @@ echo "Granting Key Vault access policy..."
 az keyvault set-policy \
   --name "$KV_NAME" \
   --object-id "$MI_PRINCIPAL_ID" \
-  --secret-permissions get list
+  --secret-permissions get list 
+
+
+echo "Granting Key Vault access policy..."
+az keyvault set-policy \
+  --name "$KV_NAME" \
+  --object-id "$MI_PRINCIPAL_ID" \
+  --key-permissions get wrapKey unwrapKey list
 
 
 

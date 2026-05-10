@@ -4,7 +4,7 @@ set -euo pipefail
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 SQL_SERVER_NAME="${SERVER_NAME:-$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-234809')].name | [0]" \
+  --query "[?contains(name, '-2348o1')].name | [0]" \
   -o tsv)}"
 SQL_SERVER_NAME="$(printf '%s' "$SQL_SERVER_NAME" | tr -d '[:space:]')"
 SQL_SERVER_FQDN="${SQL_SERVER_NAME}.database.windows.net"
@@ -27,7 +27,7 @@ DISPLAY_NAME=$(az ad signed-in-user show \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-234809')].name | [0]" \
+  --query "[?contains(name, '-2348o1')].name | [0]" \
   -o tsv)
 echo "VM Name: $VM_NAME"
 
@@ -73,13 +73,13 @@ az account get-access-token \
 
 
 # Entra Auth - Interactive (Azure CLI must be logged in)
-sqlcmd \
-  -S "${SQL_SERVER_NAME}.database.windows.net" \
-  -d "$DATABASE_NAME" \
-  -G \
-  -P "$ACCESS_TOKEN_FILE" \
-  -N \
-  -C
+# sqlcmd \
+#   -S "${SQL_SERVER_NAME}.database.windows.net" \
+#   -d "$DATABASE_NAME" \
+#   -G \
+#   -P "$ACCESS_TOKEN_FILE" \
+#   -N \
+#   -C
   
 
 # ==========================================
@@ -88,7 +88,7 @@ sqlcmd \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-234809')].name | [0]" \
+  --query "[?contains(name, '-2348o1')].name | [0]" \
   -o tsv)
 
 echo "VM Name: $VM_NAME"
@@ -102,39 +102,44 @@ echo "VM Name: $VM_NAME"
   -N \
   -C \
   -G \
-  -P "$ACCESS_TOKEN_FILE" \
-  -Q "
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.database_principals
-    WHERE name = '$VM_NAME'
-)
-BEGIN
-    CREATE USER [$VM_NAME]
-    FROM EXTERNAL PROVIDER;
-END;
+ -P "$ACCESS_TOKEN_FILE" 
+#   -Q "
+# IF NOT EXISTS (
+#     SELECT 1
+#     FROM sys.database_principals
+#     WHERE name = '$VM_NAME'
+# )
+# BEGIN
+#     CREATE USER [$VM_NAME]
+#     FROM EXTERNAL PROVIDER;
+# END;
 
-ALTER ROLE db_datareader
-ADD MEMBER [$VM_NAME];
+# ALTER ROLE db_datareader
+# ADD MEMBER [$VM_NAME];
 
-ALTER ROLE db_datawriter
-ADD MEMBER [$VM_NAME];
+# ALTER ROLE db_datawriter
+# ADD MEMBER [$VM_NAME];
 
-ALTER DATABASE [$DATABASE_NAME]
-SET QUERY_STORE (
-    OPERATION_MODE = READ_WRITE,
-    CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30),
-    DATA_FLUSH_INTERVAL_SECONDS = 900,
-    INTERVAL_LENGTH_MINUTES = 60,
-    MAX_STORAGE_SIZE_MB = 2048,
-    QUERY_CAPTURE_MODE = AUTO
-);
-"
 
-echo "=========================================="
-echo "Managed Identity user configured."
-echo "Query Store configured."
-echo "=========================================="
+# GRANT VIEW ANY COLUMN MASTER KEY DEFINITION TO [$VM_NAME];
+
+# GRANT VIEW ANY COLUMN ENCRYPTION KEY DEFINITION TO [$VM_NAME];
+
+# ALTER DATABASE [$DATABASE_NAME]
+# SET QUERY_STORE (
+#     OPERATION_MODE = READ_WRITE,
+#     CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30),
+#     DATA_FLUSH_INTERVAL_SECONDS = 900,
+#     INTERVAL_LENGTH_MINUTES = 60,
+#     MAX_STORAGE_SIZE_MB = 2048,
+#     QUERY_CAPTURE_MODE = AUTO
+# );
+# "
+
+# echo "=========================================="
+# echo "Managed Identity user configured."
+# echo "Query Store configured."
+# echo "=========================================="
 
 
 
@@ -155,40 +160,67 @@ echo "=========================================="
 -- CREATE TABLE IF NOT EXISTS
 -- ==========================================
 
+-- ==========================================
+-- CREATE TABLE IF NOT EXISTS
+-- ==========================================
+
 IF OBJECT_ID('dbo.tbl_transactions_secure', 'U') IS NULL
 BEGIN
 
 CREATE TABLE dbo.tbl_transactions_secure
 (
+    -- Primary identifier
     id BIGINT IDENTITY(63264900,1)
     NOT NULL PRIMARY KEY,
 
+    -- Transaction classification
     transaction_sub_type NVARCHAR(31) NOT NULL,
 
     transaction_type NVARCHAR(50) NOT NULL,
 
+    -- Financial values
     amount DECIMAL(19,2) NULL,
 
     charged_fee DECIMAL(19,2) NULL,
 
     currency_code CHAR(3) NOT NULL,
 
-    source_account_number VARCHAR(20)
-    MASKED WITH (FUNCTION = 'partial(0,\"XXXXXX\",4)')
+    -- Account identifiers (searchable)
+    source_account_number NVARCHAR(20)
+    COLLATE Latin1_General_BIN2
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = DETERMINISTIC,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
-    destination_account_number VARCHAR(20)
-    MASKED WITH (FUNCTION = 'partial(0,\"XXXXXX\",4)')
+    destination_account_number NVARCHAR(20)
+    COLLATE Latin1_General_BIN2
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = DETERMINISTIC,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
+    -- Sensitive PII
     destination_account_name NVARCHAR(150)
-    MASKED WITH (FUNCTION = 'partial(1,\"******\",1)')
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
     destination_bank_code VARCHAR(10) NULL,
 
     destination_bank_name NVARCHAR(100) NULL,
 
+    -- Transaction traceability
     transaction_reference VARCHAR(100) NOT NULL,
 
     transaction_external_reference VARCHAR(100) NULL,
@@ -197,22 +229,40 @@ CREATE TABLE dbo.tbl_transactions_secure
 
     request_transaction_id VARCHAR(100) NULL,
 
+    -- Status tracking
     transaction_final_status VARCHAR(50) NULL,
 
     transaction_request_status VARCHAR(50) NULL,
 
-    session_key VARCHAR(255)
-    MASKED WITH (FUNCTION = 'default()')
+    -- Sensitive secrets/tokens
+    session_key NVARCHAR(255)
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
-    recharge_pin VARCHAR(50)
-    MASKED WITH (FUNCTION = 'default()')
+    recharge_pin NVARCHAR(50)
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
-    electricity_token VARCHAR(100)
-    MASKED WITH (FUNCTION = 'default()')
+    electricity_token NVARCHAR(100)
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
+    -- Audit accountability
     user_name NVARCHAR(50)
     MASKED WITH (FUNCTION = 'partial(1,\"****\",1)')
     NOT NULL,
@@ -229,6 +279,7 @@ CREATE TABLE dbo.tbl_transactions_secure
 
     modified_on DATETIME2 NULL,
 
+    -- Transaction lifecycle
     transaction_request_date DATETIME2 NULL,
 
     transaction_response_date DATETIME2 NULL,
@@ -428,3 +479,7 @@ END;
 echo "=========================================="
 echo "Secure transaction table deployed."
 echo "=========================================="
+
+
+
+
