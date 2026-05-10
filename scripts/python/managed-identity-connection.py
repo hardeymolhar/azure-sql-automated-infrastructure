@@ -3,7 +3,7 @@ import struct
 from azure.identity import DefaultAzureCredential
 
 # Azure SQL details
-server = "sqlserver-31655.database.windows.net"
+server = "sqlserver-2348O1.database.windows.net"
 database = "demo-db"
 
 # Get access token
@@ -22,6 +22,7 @@ SERVER={server};
 DATABASE={database};
 Encrypt=yes;
 TrustServerCertificate=no;
+ColumnEncryption=Enabled;
 """
 
 # Connect
