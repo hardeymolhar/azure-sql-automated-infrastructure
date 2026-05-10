@@ -1,0 +1,262 @@
+---
+- name: Configure RHEL VM for Azure SQL Connectivity
+  hosts: rhel_vm
+  become: true
+
+  vars:
+
+    ms_sql_repo_url: "https://packages.microsoft.com/config/rhel/9/prod.repo"
+
+    ms_dotnet_repo_rpm: "https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"
+
+    dnf_packages:
+      - python3
+      - python3-pip
+      - unixODBC
+      - unixODBC-devel
+      - gcc
+      - gcc-c++
+      - curl
+      - gnupg2
+
+    pip_packages:
+      - pyodbc
+      - azure-identity
+      - azure-core
+      - sqlalchemy
+
+    dotnet_packages:
+      - Microsoft.Data.SqlClient
+      - Azure.Identity
+      - Microsoft.SqlServer.Management.AlwaysEncrypted.AzureKeyVaultProvider
+
+    dotnet_project_path: "/home/sqladmin/ae-workload"
+
+  tasks:
+
+    # =========================================================
+    # SYSTEM PACKAGES
+    # =========================================================
+
+    - name: Update DNF cache
+      ansible.builtin.dnf:
+        update_cache: true
+
+    - name: Install required RHEL packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages }}"
+        state: present
+
+    # =========================================================
+    # MICROSOFT SQL REPOSITORY
+    # =========================================================
+
+    - name: Check if Microsoft SQL repo exists
+      ansible.builtin.stat:
+        path: /etc/yum.repos.d/mssql-release.repo
+      register: mssql_repo_file
+
+    - name: Add Microsoft SQL repository
+      ansible.builtin.get_url:
+        url: "{{ ms_sql_repo_url }}"
+        dest: /etc/yum.repos.d/mssql-release.repo
+        mode: '0644'
+      when: not mssql_repo_file.stat.exists
+
+    # =========================================================
+    # ODBC + SQL TOOLS
+    # =========================================================
+
+    - name: Install Microsoft ODBC Driver 18
+      ansible.builtin.dnf:
+        name: msodbcsql18
+        state: present
+      environment:
+        ACCEPT_EULA: "Y"
+
+    - name: Install Microsoft SQL tools
+      ansible.builtin.dnf:
+        name: mssql-tools18
+        state: present
+      environment:
+        ACCEPT_EULA: "Y"
+
+    # =========================================================
+    # SQLCMD PATH
+    # =========================================================
+
+    - name: Add sqlcmd to PATH
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export PATH="$PATH:/opt/mssql-tools18/bin"'
+        state: present
+        create: true
+
+    # =========================================================
+    # PYTHON PACKAGES
+    # =========================================================
+
+    - name: Install required Python packages
+      ansible.builtin.pip:
+        name: "{{ pip_packages }}"
+        executable: pip3
+        state: present
+
+    # =========================================================
+    # INSTALL .NET 8 SDK USING OFFICIAL INSTALL SCRIPT
+    # =========================================================
+
+    - name: Download official .NET install script
+      ansible.builtin.get_url:
+        url: https://dot.net/v1/dotnet-install.sh
+        dest: /tmp/dotnet-install.sh
+        mode: '0755'
+
+    - name: Create .NET installation directory
+      ansible.builtin.file:
+        path: /home/sqladmin/.dotnet
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    - name: Install .NET 8 SDK
+      ansible.builtin.command:
+        cmd: >
+          /tmp/dotnet-install.sh
+          --channel 8.0
+          --install-dir /home/sqladmin/.dotnet
+      become_user: sqladmin
+      args:
+        creates: /home/sqladmin/.dotnet/dotnet
+
+    # =========================================================
+    # CONFIGURE .NET ENVIRONMENT
+    # =========================================================
+
+    - name: Configure DOTNET_ROOT
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export DOTNET_ROOT="$HOME/.dotnet"'
+        state: present
+        create: true
+
+    - name: Configure .NET PATH
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export PATH="$PATH:$HOME/.dotnet"'
+        state: present
+        create: true
+
+    # =========================================================
+    # VERIFY .NET INSTALLATION
+    # =========================================================
+
+    - name: Verify installed .NET SDKs
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet --list-sdks
+      register: dotnet_sdk_output
+      changed_when: false
+
+    - name: Display installed .NET SDKs
+      ansible.builtin.debug:
+        var: dotnet_sdk_output.stdout_lines
+
+    # =========================================================
+    # CREATE .NET PROJECT DIRECTORY
+    # =========================================================
+
+    - name: Create workload project directory
+      ansible.builtin.file:
+        path: "{{ dotnet_project_path }}"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    # =========================================================
+    # INITIALIZE .NET CONSOLE APP
+    # =========================================================
+
+    - name: Check if .NET project exists
+      ansible.builtin.stat:
+        path: "{{ dotnet_project_path }}/ae-workload.csproj"
+      register: dotnet_project
+
+    - name: Initialize .NET console application
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet new console
+        chdir: "{{ dotnet_project_path }}"
+      become_user: sqladmin
+      when: not dotnet_project.stat.exists
+
+    # =========================================================
+    # INSTALL NUGET PACKAGES
+    # =========================================================
+
+    - name: Install Microsoft.Data.SqlClient package
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet add package Microsoft.Data.SqlClient
+        chdir: "{{ dotnet_project_path }}"
+      become_user: sqladmin
+
+    - name: Install Azure.Identity package
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet add package Azure.Identity
+        chdir: "{{ dotnet_project_path }}"
+      become_user: sqladmin
+
+
+    # =========================================================
+    # RESTORE NUGET PACKAGES
+    # =========================================================
+
+    - name: Restore .NET dependencies
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet restore
+        chdir: "{{ dotnet_project_path }}"
+      become_user: sqladmin
+
+    # =========================================================
+    # VERIFY INSTALLED NUGET PACKAGES
+    # =========================================================
+
+    - name: List installed NuGet packages
+      ansible.builtin.command:
+        cmd: /home/sqladmin/.dotnet/dotnet list package
+        chdir: "{{ dotnet_project_path }}"
+      become_user: sqladmin
+      register: dotnet_packages_output
+      changed_when: false
+
+    - name: Display installed NuGet packages
+      ansible.builtin.debug:
+        var: dotnet_packages_output.stdout_lines
+
+    # =========================================================
+    # VERIFY ODBC INSTALLATION
+    # =========================================================
+
+    - name: Verify ODBC installation
+      ansible.builtin.command:
+        cmd: odbcinst -j
+      register: odbc_output
+      changed_when: false
+
+    - name: Display ODBC configuration
+      ansible.builtin.debug:
+        var: odbc_output.stdout_lines
+
+    # =========================================================
+    # VERIFY SQLCMD
+    # =========================================================
+
+    - name: Verify sqlcmd installation
+      ansible.builtin.command:
+        cmd: /opt/mssql-tools18/bin/sqlcmd -?
+      register: sqlcmd_output
+      changed_when: false
+
+    - name: Display sqlcmd verification
+      ansible.builtin.debug:
+        var: sqlcmd_output.stdout_lines

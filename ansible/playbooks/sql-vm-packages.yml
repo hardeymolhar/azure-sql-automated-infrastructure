@@ -68,8 +68,7 @@
 
       ansible.builtin.lineinfile:
         path: /home/sqladmin/.bashrc
-        line: 'export PATH="/opt/mssql-tools18/bin"'
-        state: present
+        line: 'export PATH="$PATH:/opt/mssql-tools18/bin"'      
 
     - name: Install required Python packages
       ansible.builtin.pip:
