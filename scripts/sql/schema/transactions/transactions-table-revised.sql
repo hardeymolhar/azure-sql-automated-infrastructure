@@ -1,4 +1,4 @@
-CREATE TABLE dbo.tbl_transactions_secure
+CREATE TABLE dbo.tbl_transactions_secure_AEK
 (
     -- Primary identifier
     id BIGINT IDENTITY(63264900,1)
@@ -16,27 +16,35 @@ CREATE TABLE dbo.tbl_transactions_secure
 
     currency_code CHAR(3) NOT NULL,
 
-    -- Account identifiers (encrypted)
-    source_account_number VARCHAR(20) COLLATE Latin1_General_BIN2
+    -- Account identifiers (searchable)
+    source_account_number NVARCHAR(20)
+    COLLATE Latin1_General_BIN2
     ENCRYPTED WITH
     (
-        COLUMN_ENCRYPTION_KEY = CEK_Auto1,
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
         ENCRYPTION_TYPE = DETERMINISTIC,
         ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
     )
     NULL,
 
-    destination_account_number VARCHAR(20) COLLATE Latin1_General_BIN2
+    destination_account_number NVARCHAR(20)
+    COLLATE Latin1_General_BIN2
     ENCRYPTED WITH
     (
-        COLUMN_ENCRYPTION_KEY = CEK_Auto1,
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
         ENCRYPTION_TYPE = DETERMINISTIC,
         ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
     )
     NULL,
 
+    -- Sensitive PII
     destination_account_name NVARCHAR(150)
-    MASKED WITH (FUNCTION = 'partial(1,"******",1)')
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
     destination_bank_code VARCHAR(10) NULL,
@@ -57,27 +65,32 @@ CREATE TABLE dbo.tbl_transactions_secure
 
     transaction_request_status VARCHAR(50) NULL,
 
-    -- Sensitive operational secrets
-    session_key VARCHAR(255)
+    -- Sensitive secrets/tokens
+    session_key NVARCHAR(255)
     ENCRYPTED WITH
     (
-        COLUMN_ENCRYPTION_KEY = CEK_Auto1,
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
         ENCRYPTION_TYPE = RANDOMIZED,
         ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
     )
     NULL,
 
-    recharge_pin VARCHAR(50)
+    recharge_pin NVARCHAR(50)
     ENCRYPTED WITH
     (
-        COLUMN_ENCRYPTION_KEY = CEK_Auto1,
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
         ENCRYPTION_TYPE = RANDOMIZED,
         ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
     )
     NULL,
 
-    electricity_token VARCHAR(100)
-    MASKED WITH (FUNCTION = 'default()')
+    electricity_token NVARCHAR(100)
+    ENCRYPTED WITH
+    (
+        COLUMN_ENCRYPTION_KEY = AE_CEK,
+        ENCRYPTION_TYPE = RANDOMIZED,
+        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256'
+    )
     NULL,
 
     -- Audit accountability
