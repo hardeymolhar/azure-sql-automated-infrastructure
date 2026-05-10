@@ -18,7 +18,11 @@ set -euo pipefail
 #   AUTH_MODE="sql" ADMIN_USER="sqladmin" ADMIN_PASSWORD="..." ./sql-automatic-tuning.sh
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
-SERVER_NAME="${SERVER_NAME:-$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)}"
+SERVER_NAME="${SERVER_NAME:-$(az sql server list \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[?contains(name, '-234806')].name | [0]" \
+  -o tsv)}"
+SERVER_NAME="$(printf '%s' "$SERVER_NAME" | tr -d '[:space:]')"
 DB_NAME="${DB_NAME:-demo-db}"
 AUTH_MODE="${AUTH_MODE:-azcli}"
 ADMIN_USER="${ADMIN_USER:-}"
@@ -82,7 +86,7 @@ require_one_of "DROP_INDEX" "$DROP_INDEX" ON OFF DEFAULT
 require_one_of "AUTH_MODE" "$AUTH_MODE" AZCLI ENTRA SQL
 require_one_of "ENSURE_QUERY_STORE_READ_WRITE" "$ENSURE_QUERY_STORE_READ_WRITE" TRUE FALSE
 
-if [[ "$AUTH_MODE" == "ENTRA" ]]; then
+if [[ "$AUTH_MODE" == "ENTRA" && -z "$ADMIN_USER" ]]; then
   ADMIN_USER="${ADMIN_USER:-$(az ad signed-in-user show --query userPrincipalName -o tsv)}"
 fi
 
@@ -103,7 +107,13 @@ if ! [[ "$QUERY_STORE_MAX_STORAGE_MB" =~ ^[0-9]+$ ]] || (( QUERY_STORE_MAX_STORA
   exit 1
 fi
 
-if ! command -v sqlcmd >/dev/null 2>&1; then
+if [[ -x "/opt/homebrew/bin/sqlcmd" ]]; then
+  SQLCMD_BIN="/opt/homebrew/bin/sqlcmd"
+else
+  SQLCMD_BIN="sqlcmd"
+fi
+
+if ! command -v "$SQLCMD_BIN" >/dev/null 2>&1; then
   echo "ERROR: sqlcmd is not installed or not in PATH."
   echo "Install sqlcmd, then rerun this script."
   exit 1
@@ -111,6 +121,7 @@ fi
 
 echo "Resource group:         $RESOURCE_GROUP"
 echo "SQL server:             $SERVER_NAME"
+echo "SQL FQDN:               ${SERVER_NAME}.database.windows.net"
 echo "Database:               $DB_NAME"
 echo "Auth mode:              $AUTH_MODE"
 echo "Admin user:             ${ADMIN_USER:-<Azure CLI signed-in identity>}"
@@ -143,7 +154,7 @@ case "$AUTH_MODE" in
 esac
 
 echo "Checking Query Store state..."
-sqlcmd "${SQLCMD_ARGS[@]}" -h -1 -W -Q "
+"$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -h -1 -W -Q "
 SET NOCOUNT ON;
 SELECT 'Query Store actual state: ' + actual_state_desc
 FROM sys.database_query_store_options;
@@ -151,7 +162,7 @@ FROM sys.database_query_store_options;
 
 if [[ "$ENSURE_QUERY_STORE_READ_WRITE" == "TRUE" ]]; then
   echo "Ensuring Query Store is READ_WRITE..."
-  sqlcmd "${SQLCMD_ARGS[@]}" -Q "
+  "$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -Q "
 ALTER DATABASE CURRENT SET QUERY_STORE = ON;
 ALTER DATABASE CURRENT SET QUERY_STORE (
   OPERATION_MODE = READ_WRITE,
@@ -160,7 +171,7 @@ ALTER DATABASE CURRENT SET QUERY_STORE (
 "
 
   echo "Query Store state after configuration:"
-  sqlcmd "${SQLCMD_ARGS[@]}" -h -1 -W -Q "
+  "$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -h -1 -W -Q "
 SET NOCOUNT ON;
 SELECT
   'Query Store desired state: ' + desired_state_desc,
@@ -171,7 +182,7 @@ FROM sys.database_query_store_options;
 fi
 
 echo "Configuring automatic tuning..."
-sqlcmd "${SQLCMD_ARGS[@]}" -Q "
+"$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -Q "
 ALTER DATABASE CURRENT SET AUTOMATIC_TUNING = $DESIRED_STATE;
 ALTER DATABASE CURRENT SET AUTOMATIC_TUNING (
   FORCE_LAST_GOOD_PLAN = $FORCE_LAST_GOOD_PLAN,
@@ -181,7 +192,7 @@ ALTER DATABASE CURRENT SET AUTOMATIC_TUNING (
 "
 
 echo "Automatic tuning mode:"
-sqlcmd "${SQLCMD_ARGS[@]}" -Q "
+"$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -Q "
 SET NOCOUNT ON;
 SELECT
   desired_state_desc,
@@ -190,7 +201,7 @@ FROM sys.database_automatic_tuning_mode;
 "
 
 echo "Automatic tuning options:"
-sqlcmd "${SQLCMD_ARGS[@]}" -Q "
+"$SQLCMD_BIN" "${SQLCMD_ARGS[@]}" -Q "
 SET NOCOUNT ON;
 SELECT
   name,
@@ -205,6 +216,8 @@ echo "Database automatic tuning configured successfully."
 
 
 
+SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+
 az rest \
   --method GET \
-  --url "https://management.azure.com/subscriptions/$subscription_id/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Sql/servers/$SQL_SERVER_NAME/databases/$DATABASE_NAME/automaticTuning/current?api-version=2021-11-01-preview"
+  --url "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Sql/servers/$SERVER_NAME/databases/$DB_NAME/automaticTuning/current?api-version=2021-11-01-preview"
