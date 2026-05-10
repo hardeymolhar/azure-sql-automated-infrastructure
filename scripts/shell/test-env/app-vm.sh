@@ -2,40 +2,34 @@
 
 set -euo pipefail
 
-# ==========================================
+# =========
 # VARIABLES
-# ==========================================
+# =========
 
 RESOURCE_GROUP="$(az group list --query "[1].name" -o tsv)"
 LOCATION="$(az group list --query "[1].location" -o tsv)"
 
-VM_NAME="vm-$RANDOM"
+VM_NAME="vm-234809"
+VNET_NAME="vnet-234809"
+SUBNET_NAME="subnet-234809"
+NSG_NAME="nsg-234809"
+NIC_NAME="nic-234809"
+PUBLIC_IP_NAME="pip-234809"
 
-VNET_NAME="vnet-$RANDOM"
-SUBNET_NAME="subnet-1"
-
-NSG_NAME="nsg-$RANDOM"
-
-NIC_NAME="nic-$RANDOM"
-
-PUBLIC_IP_NAME="pip-$RANDOM"
-
-KV_NAME="$(az keyvault list --query "[0].name" -o tsv)"  # Change this if you have multiple vaults or want a specific one
+KV_NAME="$(az keyvault list \
+  --query "[?contains(name, '-234809')].name | [0]" \
+  -o tsv)"
 
 SSH_SECRET_NAME="vm-ssh-public-key"
-
 ADMIN_USERNAME="sqladmin"
-
 VM_SIZE="Standard_B2ms"
-
-IMAGE="Ubuntu2204"
+IMAGE="RedHat:RHEL:9-lvm-gen2:latest"
 
 # ==========================================
 # GET CLIENT PUBLIC IP
 # ==========================================
 
 CLIENT_IP=$(curl -s ifconfig.me)
-
 echo "Client Public IP: $CLIENT_IP"
 
 # ==========================================
@@ -120,6 +114,7 @@ az vm create \
   --ssh-key-values "$SSH_PUBLIC_KEY" \
   --assign-identity
 
+
 # ==========================================
 # FETCH VM PUBLIC IP
 # ==========================================
@@ -130,6 +125,12 @@ VM_PUBLIC_IP=$(az vm show \
   -d \
   --query publicIps \
   -o tsv)
+
+
+az keyvault network-rule add \
+  --name "$KV_NAME" \
+  --ip-address "$VM_PUBLIC_IP"
+
 
 
 # ==========================================
@@ -153,6 +154,8 @@ az keyvault set-policy \
   --name "$KV_NAME" \
   --object-id "$MI_PRINCIPAL_ID" \
   --secret-permissions get list
+
+
 
 echo "=========================================="
 echo "VM deployed successfully."

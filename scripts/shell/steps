@@ -4,11 +4,11 @@
 04-vm.sh
 05-sql-server.sh
 06-sql-db.sh
+set-entra-admin.sh
 07-identity.sh
-08-schema.sh
-09-security.sh
 10-query-store.sh
-11-backup.sh
-12-monitoring.sh
-13-performance.sh
-14-app-release.sh
+08-schema.sh
+09-sql-audit.sh
+11-diag-settings.sh
+12-sql-automatic-tuning.sh
+13 backup

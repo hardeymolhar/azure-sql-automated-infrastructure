@@ -1,0 +1,88 @@
+---
+- name: Configure RHEL VM for Azure SQL Connectivity
+  hosts: rhel_vm
+  become: true
+
+  vars:
+    ms_repo_url: "https://packages.microsoft.com/config/rhel/9/prod.repo"
+
+    dnf_packages:
+      - python3
+      - python3-pip
+      - unixODBC
+      - unixODBC-devel
+      - gcc
+      - gcc-c++
+      - curl
+      - gnupg2
+
+    pip_packages:
+      - pyodbc
+      - azure-identity
+      - azure-core
+      - sqlalchemy
+
+  tasks:
+
+    - name: Update DNF cache
+      ansible.builtin.dnf:
+        update_cache: true
+        state: present
+
+    - name: Install required RHEL packages
+      ansible.builtin.dnf:
+        name: "{{ dnf_packages }}"
+        state: present
+
+    - name: Add Microsoft SQL repository
+      ansible.builtin.get_url:
+        url: "{{ ms_repo_url }}"
+        dest: /etc/yum.repos.d/mssql-release.repo
+        mode: '0644'
+
+    - name: Install Microsoft ODBC Driver 18
+      ansible.builtin.dnf:
+        name: msodbcsql18
+        state: present
+      environment:
+        ACCEPT_EULA: "Y"
+
+    - name: Install Microsoft ODBC Driver 18
+      ansible.builtin.dnf:
+        name: msodbcsql18
+        state: present
+
+      environment:
+        ACCEPT_EULA: "Y"
+
+    - name: Install Microsoft SQL tools
+
+      ansible.builtin.dnf:
+        name: mssql-tools18
+        state: present
+
+      environment:
+        ACCEPT_EULA: "Y"
+
+    - name: Add sqlcmd to PATH
+
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export PATH="/opt/mssql-tools18/bin"'
+        state: present
+
+    - name: Install required Python packages
+      ansible.builtin.pip:
+        name: "{{ pip_packages }}"
+        executable: pip3
+        state: present
+
+    - name: Verify ODBC installation
+      ansible.builtin.command:
+        cmd: odbcinst -j
+      register: odbc_output
+      changed_when: false
+
+    - name: Display ODBC configuration
+      ansible.builtin.debug:
+        var: odbc_output.stdout_lines

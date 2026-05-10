@@ -4,14 +4,11 @@ RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 LOCATION="eastus"
 
 
-#GitBash
-SSH_PRIVATE_KEY_PATH="/c/Users/P10822/.ssh/vm-key"
-SSH_PUBLIC_KEY_PATH="/c/Users/P10822/.ssh/vm-key.pub"
 
+SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
+SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 
-# SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
-# SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
-KV_NAME="kv-$RANDOM"
+KV_NAME="kv-234809"
 
 
 
@@ -38,29 +35,39 @@ else
       --retention-days 7 \
       --enable-purge-protection true \
       --public-network-access Enabled \
-      --default-action Allow \
-      --enable-rbac-authorization false
+      --default-action Deny \
+      --enable-rbac-authorization false \
+      --bypass AzureServices
 fi
 
-az keyvault network-rule add \
-  --name "$KV_NAME" \
-  --ip-address "$CLIENT_IP"
+
+if az keyvault network-rule list \
+    --name "$KV_NAME" \
+    --query "ipRules[?value=='$CLIENT_IP']" \
+    -o tsv | grep -q "$CLIENT_IP"
+then
+    echo "IP rule already exists: $CLIENT_IP"
+else
+    az keyvault network-rule add \
+      --name "$KV_NAME" \
+      --ip-address "$CLIENT_IP"
+fi
 
 
+#
+if az keyvault network-rule list \
+    --name "$KV_NAME" \
+    --query "ipRules[?value=='$CLIENT_IP']" \
+    -o tsv | grep -q "$CLIENT_IP"
+then
+    echo "IP rule already exists: $CLIENT_IP"
+else
+    az keyvault network-rule add \
+      --name "$KV_NAME" \
+      --ip-address "$CLIENT_IP"
+fi
 
 
-
-az keyvault set-policy \
-  --name $KV_NAME \
-  --object-id $MY_OBJECT_ID \
-  --key-permissions \
-    get list create update delete recover backup restore \
-    wrapKey unwrapKey encrypt decrypt sign verify purge release \
-    rotate getrotationpolicy setrotationpolicy \
-  --secret-permissions \
-    get list set delete recover backup restore purge \
-  --certificate-permissions \
-    get list create update delete recover backup restore purge
 
 echo "Waiting for Key Vault DNS propagation..."
 
@@ -72,44 +79,85 @@ done
 
 echo "Key Vault endpoint resolved successfully."
 
-az keyvault key create \
-  --vault-name $KV_NAME \
-  --name always-encrypted-key \
-  --kty RSA \
-  --size 2048 \
-  --ops wrapKey unwrapKey sign verify
 
-az keyvault key create \
-  --vault-name $KV_NAME \
-  --name tde-encrypted-key \
-  --kty RSA \
-  --size 2048 \
-  --ops wrapKey unwrapKey sign verify encrypt decrypt
 
+if az keyvault key show \
+    --vault-name "$KV_NAME" \
+    --name "column-master-key" \
+    &>/dev/null
+then
+    echo "Key already exists: column-master-key"
+else
+    az keyvault key create \
+      --vault-name "$KV_NAME" \
+      --name "column-master-key" \
+      --kty RSA \
+      --size 2048 \
+      --ops wrapKey unwrapKey sign verify
+fi
+
+
+
+if az keyvault key show \
+    --vault-name "$KV_NAME" \
+    --name "tde-encrypted-key" \
+    &>/dev/null
+then
+    echo "Key already exists: tde-encrypted-key"
+else
+    az keyvault key create \
+      --vault-name "$KV_NAME" \
+      --name "tde-encrypted-key" \
+      --kty RSA \
+      --size 2048 \
+      --ops wrapKey unwrapKey sign verify encrypt decrypt
+fi
 # ==========================================
 # UPLOAD SSH PRIVATE KEY
 # ==========================================
 
-az keyvault secret set \
-  --vault-name "$KV_NAME" \
-  --name "vm-ssh-private-key" \
-  --file "$SSH_PRIVATE_KEY_PATH"
+if az keyvault secret show \
+    --vault-name "$KV_NAME" \
+    --name "vm-ssh-private-key" \
+    &>/dev/null
+then
+    echo "Secret already exists: vm-ssh-private-key"
+else
+    az keyvault secret set \
+      --vault-name "$KV_NAME" \
+      --name "vm-ssh-private-key" \
+      --file "$SSH_PRIVATE_KEY_PATH"
+fi
 
 # ==========================================
 # UPLOAD SSH PUBLIC KEY
 # ==========================================
 
-az keyvault secret set \
-  --vault-name "$KV_NAME" \
-  --name "vm-ssh-public-key" \
-  --file "$SSH_PUBLIC_KEY_PATH"
+if az keyvault secret show \
+    --vault-name "$KV_NAME" \
+    --name "vm-ssh-public-key" \
+    &>/dev/null
+then
+    echo "Secret already exists: vm-ssh-public-key"
+else
+    az keyvault secret set \
+      --vault-name "$KV_NAME" \
+      --name "vm-ssh-public-key" \
+      --file "$SSH_PUBLIC_KEY_PATH"
+fi
 
 
 
 AE_KEY_ID=$(az keyvault key show \
   --vault-name $KV_NAME \
-  --name always-encrypted-key \
+  --name column-master-key \
   --query key.kid -o tsv)
+
+
+echo "Key Vault setup complete. Always Encrypted Key ID: $AE_KEY_ID"
+echo "Key Vault Name: $KV_NAME"
+echo "Key Vault ID: $(az keyvault show --name $KV_NAME --query id -o tsv)"
+
 
 
 

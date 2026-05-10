@@ -5,10 +5,9 @@ set -euo pipefail
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 
 
-# 2. Get server name safely
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[0].name" \
+  --query "[?contains(name, '-234809')].name | [0]" \
   -o tsv)
 
 # =========================================================
@@ -23,23 +22,6 @@ if ! az group exists --name "$RESOURCE_GROUP" | grep -q true; then
 
 fi
 
-# =========================================================
-# VALIDATE SQL SERVER
-# =========================================================
-
-SERVER_EXISTS=$(az sql server show \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$SERVER_NAME" \
-    --query "name" \
-    -o tsv 2>/dev/null || true)
-
-if [[ -z "$SERVER_EXISTS" ]]; then
-
-    echo "ERROR: SQL Server '$SERVER_NAME' does not exist."
-
-    exit 1
-
-fi
 
 # =========================================================
 # GET SIGNED-IN USER DETAILS
@@ -59,11 +41,20 @@ OBJECT_ID=$(az ad signed-in-user show \
 
 echo "Configuring Microsoft Entra admin..."
 
-az sql server ad-admin create \
+if az sql server ad-admin list \
     --resource-group "$RESOURCE_GROUP" \
     --server "$SERVER_NAME" \
-    --display-name "$DISPLAY_NAME" \
-    --object-id "$OBJECT_ID"
+    --query "[?objectId=='$OBJECT_ID'] | [0]" \
+    -o tsv | grep -q "$OBJECT_ID"
+then
+    echo "Microsoft Entra admin already configured."
+else
+    az sql server ad-admin create \
+        --resource-group "$RESOURCE_GROUP" \
+        --server "$SERVER_NAME" \
+        --display-name "$DISPLAY_NAME" \
+        --object-id "$OBJECT_ID"
+fi
 
 echo ""
 

@@ -8,10 +8,21 @@ set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
 LOCATION="${LOCATION:-eastus}"
-SERVER_NAME="${SERVER_NAME:-$(az sql server list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)}"
+SERVER_NAME="${SERVER_NAME:-$(az sql server list \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[?contains(name, '-234809')].name | [0]" \
+  -o tsv)
+)}"
 DB_NAME="${DB_NAME:-demo-db}"
 LAW_NAME="${LAW_NAME:-sql-audit-law}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
+
+
+SERVER_NAME=$(az sql server list \
+  --resource-group "$RESOURCE_GROUP" \
+  --query "[?contains(name, '-234809')].name | [0]" \
+  -o tsv)
+
 
 if [[ -z "$RESOURCE_GROUP" ]]; then
   echo "No resource group found. Set RESOURCE_GROUP before running this script."
