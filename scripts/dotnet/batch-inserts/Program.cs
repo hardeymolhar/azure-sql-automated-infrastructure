@@ -13,10 +13,10 @@ class Program
     static async Task Main()
     {
         string server =
-            "sqlserver-2348o1.database.windows.net";
-
+            $"{Environment.GetEnvironmentVariable("SQL_SERVER_NAME")}.database.windows.net";
+            
         string database =
-            "demo-db";
+            Environment.GetEnvironmentVariable("DATABASE_NAME");
 
         var credential =
             new DefaultAzureCredential();
@@ -158,12 +158,36 @@ VALUES
             "mary"
         };
 
+        const int BatchSize = 4000;
         long totalInserted = 0;
+        int maxBatches =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("MAX_BATCHES"),
+                out int parsedMaxBatches
+            )
+                ? parsedMaxBatches
+                : 1;
+        int batchDelayMilliseconds =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("BATCH_DELAY_MS"),
+                out int parsedBatchDelayMilliseconds
+            )
+                ? parsedBatchDelayMilliseconds
+                : 1000;
 
-        while (true)
+        for (int batchNumber = 1; batchNumber <= maxBatches; batchNumber++)
         {
+            using SqlTransaction transaction =
+                (SqlTransaction)await conn.BeginTransactionAsync();
+
+            long batchStart = totalInserted + 1;
+
+            try
+            {
+            for (int rowInBatch = 0; rowInBatch < BatchSize; rowInBatch++)
+            {
             using SqlCommand cmd =
-                new SqlCommand(insertSql, conn);
+                new SqlCommand(insertSql, conn, transaction);
 
             DateTime now = DateTime.UtcNow;
 
@@ -478,12 +502,30 @@ VALUES
             await cmd.ExecuteNonQueryAsync();
 
             totalInserted++;
+            }
+
+            await transaction.CommitAsync();
 
             Console.WriteLine(
-                $"Inserted row {totalInserted} at {DateTime.UtcNow}"
+                $"Committed batch {batchNumber}/{maxBatches} " +
+                $"of {BatchSize} rows. " +
+                $"Rows {batchStart}-{totalInserted}. " +
+                $"Total inserted: {totalInserted}. " +
+                $"Commit Time: {DateTime.UtcNow}"
             );
 
-            await Task.Delay(1000);
+            Console.Out.Flush();
+
+            if (batchDelayMilliseconds > 0)
+            {
+                await Task.Delay(batchDelayMilliseconds);
+            }
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
     }
 }

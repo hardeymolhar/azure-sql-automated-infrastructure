@@ -10,7 +10,7 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
 LOCATION="${LOCATION:-eastus}"
 SERVER_NAME="${SERVER_NAME:-$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 )}"
 DB_NAME="${DB_NAME:-demo-db}"
@@ -20,7 +20,7 @@ RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 
 

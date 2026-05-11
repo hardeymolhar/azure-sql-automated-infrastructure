@@ -113,7 +113,7 @@ flowchart LR
 flowchart LR
 
     subgraph Client Layer
-        P[Python Workload Simulator]
+        P[Application VM]
     end
 
     subgraph Network Layer
@@ -256,20 +256,10 @@ flowchart TD
 
 
 
-## SQL Server Auditing
-
-![Auditing](docs/images/auditing.png)
-
----
-
-## Audit Logs Verification
+## SQL Database Auditing
 
 ![Auditing](docs/images/audit-logs.png)
 
-
-## Diagnostic Settings
-
-![Diagnostic Settings](docs/images/diag-settings.png)
 
 ---
 
@@ -298,23 +288,69 @@ Administrative users such as the Microsoft Entra administrator can view original
 ![Admin View](docs/images/admin.png)
 
 
-### Always Encrypted
+## Always Encrypted Demonstration
 
-This confirms that Azure SQL Always Encrypted was successfully configured by creating the Column Master Key (CMK) metadata, generating and protecting the Column Encryption Key (CEK) using Azure Key Vault through the PowerShell client, encrypting sensitive transaction columns with deterministic and randomized encryption types, and validating that protected data remains unreadable when queried directly without client-side decryption access.
+This demonstration validates:
 
+- Azure Key Vault integration
+- Column Master Key (CMK) and Column Encryption Key (CEK) configuration
+- client-side encryption using .NET SqlClient
+- ciphertext protection in Azure SQL
+- successful encrypted batch inserts using Managed Identity authentication
 
 ![Always Encrypted](docs/images/always-encrypted.png)
 
+[![Watch Demo Video](https://img.shields.io/badge/Watch-Always_Encrypted_Demo-0078D4?style=for-the-badge&logo=microsoftazure)](https://github.com/user-attachments/assets/YOUR-VIDEO-ID)
 
-![Always Encrypted](docs/images/encrypted-columns.png)
-
-
-![Always Encrypted](docs/images/ciphertext.png)
 
 
 ## Workload Simulation and Validation
 
-This phase introduces a Python-based workload simulator to validate how the Azure SQL architecture behaves under realistic operational conditions.
+This phase introduces workload simulation to validate how the Azure SQL architecture behaves under realistic operational conditions.
+
+Both Python and .NET implementations were evaluated during testing.
+
+| Capability | Python (`pyodbc`) | .NET (`Microsoft.Data.SqlClient`) |
+|---|---|---|
+| Azure SQL Connectivity | ✅ | ✅ |
+| Managed Identity Authentication | ✅ | ✅ |
+| Batch Workloads | ✅ | ✅ |
+| Always Encrypted Support | Limited | Full |
+| Azure Key Vault CMK Integration | Limited | Native |
+| Client-Side Decryption | Inconsistent | Fully Supported |
+
+
+Although Python successfully supported workload generation and Azure SQL connectivity, limitations were encountered when validating Always Encrypted operations using Azure Key Vault-backed Column Master Keys (CMKs).
+
+The .NET implementation became the primary workload engine because the official `Microsoft.Data.SqlClient` driver provides native support for:
+
+- Always Encrypted
+- Azure Key Vault integration
+- Client-side encryption and decryption
+- Deterministic and randomized encryption handling
+- Secure inserts into encrypted columns
+
+
+## .NET Workload Simulator
+
+| Directory | Purpose |
+|---|---|
+| [`./scripts/dotnet/`](./scripts/dotnet/) | Always Encrypted validation and secure workload simulation |
+
+
+
+## Python Workload Scripts
+
+| Script | Purpose |
+|---|---|
+| [`./scripts/python/`](./scripts/python/) | Initial Deployment Using Python |
+
+---
+
+
+
+
+# Automation Workflow
 
 Ansible will be used to automate the deployment process by configuring the Azure VM, installing required drivers and dependencies, and deploying the Python workload scripts automatically.
 
@@ -329,24 +365,26 @@ The workload simulator will then execute realistic database activities such as:
 flowchart LR
 
     A[Use Ansible to Configure Azure VM
-    Install ODBC Drivers • Python Packages • SQL Tools]
+    Install .NET 8 SDK • ODBC Drivers • SQL Tools]
 
     -->
 
-    B[Deploy Python Workload Scripts to the VM
+    B[Deploy .NET Workload Scripts to the VM
     Automated Provisioning and Execution]
 
     -->
 
-    C[Execute Realistic Database Workloads
+    C[Connect Securely to Azure SQL
+    Using Managed Identity]
+
+    -->
+
+    D[Execute Realistic Database Workloads
     Batch Inserts • Concurrent Operations • Updates • Deletes]
 
     -->
 
-    D[Connect Securely to Azure SQL
-    Managed Identity • Private Endpoint]
 
-    -->
 
     E[Collect Azure SQL Metrics and Logs
     DTU • CPU • Log IO • Data IO • Sessions]
@@ -390,3 +428,7 @@ flowchart LR
 </ul>
 
 
+
+![Ansible Deployment](docs/images/ansible-demo.png)
+
+[![Watch Ansible Demo](https://img.shields.io/badge/Watch-Ansible_Demo-EE0000?style=for-the-badge&logo=ansible)](docs/images/ansible-demo.mp4)

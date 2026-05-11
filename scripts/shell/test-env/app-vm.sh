@@ -9,16 +9,16 @@ set -euo pipefail
 RESOURCE_GROUP="$(az group list --query "[1].name" -o tsv)"
 LOCATION="$(az group list --query "[1].location" -o tsv)"
 
-VM_NAME="vm-2348O1"
-VNET_NAME="vnet-2348O1"
-SUBNET_NAME="subnet-2348O1"
-NSG_NAME="nsg-2348O1"
-NIC_NAME="nic-2348O1"
-PUBLIC_IP_NAME="pip-2348O1"
+VM_NAME="vm-2348112"
+VNET_NAME="vnet-2348112"
+SUBNET_NAME="subnet-2348112"
+NSG_NAME="nsg-2348112"
+NIC_NAME="nic-2348112"
+PUBLIC_IP_NAME="pip-2348112"
 
 KV_NAME=$(az keyvault list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348O1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 
 SSH_SECRET_NAME="vm-ssh-public-key"

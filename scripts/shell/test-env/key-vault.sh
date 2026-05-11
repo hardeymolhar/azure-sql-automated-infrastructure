@@ -8,7 +8,7 @@ LOCATION="eastus"
 SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
 SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 
-KV_NAME="kv-2348O1"
+KV_NAME="kv-2348112"
 
 
 

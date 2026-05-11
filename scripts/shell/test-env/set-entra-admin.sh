@@ -7,7 +7,7 @@ RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 
 # =========================================================

@@ -1,18 +1,39 @@
 using System;
 using System.Threading.Tasks;
+
 using Microsoft.Data.SqlClient;
-using Azure.Identity;
+
 using Azure.Core;
+using Azure.Identity;
 
 class Program
 {
     static async Task Main()
     {
-        string server =
-            "sqlserver-2348o1.database.windows.net";
+        string? sqlServerName =
+            Environment.GetEnvironmentVariable(
+                "SQL_SERVER_NAME"
+            );
 
-        string database =
-            "demo-db";
+        string? databaseName =
+            Environment.GetEnvironmentVariable(
+                "DATABASE_NAME"
+            );
+
+        if (
+            string.IsNullOrWhiteSpace(sqlServerName) ||
+            string.IsNullOrWhiteSpace(databaseName)
+        )
+        {
+            Console.WriteLine(
+                "Missing required environment variables."
+            );
+
+            return;
+        }
+
+        string server =
+            $"{sqlServerName}.database.windows.net";
 
         var credential =
             new DefaultAzureCredential();
@@ -29,7 +50,7 @@ class Program
 
         string connectionString =
             $"Server={server};" +
-            $"Database={database};" +
+            $"Database={databaseName};" +
             $"Encrypt=True;" +
             $"TrustServerCertificate=False;" +
             $"Column Encryption Setting=Enabled;";

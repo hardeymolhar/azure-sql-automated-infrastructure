@@ -12,7 +12,7 @@ LOCATION=$(az group show \
   --name "$RESOURCE_GROUP" \
   --query "location" -o tsv)
 
-SERVER_NAME="sqlserver-2348o1"
+SERVER_NAME="sqlserver-2348112"
 
 DB_NAME="demo-db"
 
@@ -26,13 +26,13 @@ VM_FIREWALL_RULE_NAME="AllowVMIP"
 
 VM_IP=$(az vm list-ip-addresses \
   --resource-group "$RESOURCE_GROUP" \
-  --name "vm-2348o1" \
+  --name "vm-2348112" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 
 KV_NAME=$(az keyvault list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 
 TDE_KEY_ID=$(az keyvault key show \

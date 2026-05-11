@@ -4,7 +4,7 @@ set -euo pipefail
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 SQL_SERVER_NAME="${SERVER_NAME:-$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)}"
 SQL_SERVER_NAME="$(printf '%s' "$SQL_SERVER_NAME" | tr -d '[:space:]')"
 SQL_SERVER_FQDN="${SQL_SERVER_NAME}.database.windows.net"
@@ -27,7 +27,7 @@ DISPLAY_NAME=$(az ad signed-in-user show \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 echo "VM Name: $VM_NAME"
 
@@ -88,7 +88,7 @@ az account get-access-token \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348o1')].name | [0]" \
+  --query "[?contains(name, '-2348112')].name | [0]" \
   -o tsv)
 
 echo "VM Name: $VM_NAME"
@@ -102,44 +102,58 @@ echo "VM Name: $VM_NAME"
   -N \
   -C \
   -G \
- -P "$ACCESS_TOKEN_FILE" 
-#   -Q "
-# IF NOT EXISTS (
-#     SELECT 1
-#     FROM sys.database_principals
-#     WHERE name = '$VM_NAME'
-# )
-# BEGIN
-#     CREATE USER [$VM_NAME]
-#     FROM EXTERNAL PROVIDER;
-# END;
+ -P "$ACCESS_TOKEN_FILE" \
+ -Q "
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.database_principals
+    WHERE name = '$VM_NAME'
+)
+BEGIN
+    CREATE USER [$VM_NAME]
+    FROM EXTERNAL PROVIDER;
+END;
 
-# ALTER ROLE db_datareader
-# ADD MEMBER [$VM_NAME];
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.database_principals
+    WHERE name = 'test_user'
+)
+BEGIN
+    CREATE USER [test_user]
+    WITH PASSWORD = 'r3P1iKa5x_123';
+END;
 
-# ALTER ROLE db_datawriter
-# ADD MEMBER [$VM_NAME];
+ALTER ROLE db_datareader
+ADD MEMBER [$VM_NAME];
+
+ALTER ROLE db_datawriter
+ADD MEMBER [$VM_NAME];
+
+ALTER ROLE db_datareader
+ADD MEMBER [test_user];
 
 
-# GRANT VIEW ANY COLUMN MASTER KEY DEFINITION TO [$VM_NAME];
+GRANT VIEW ANY COLUMN MASTER KEY DEFINITION TO [$VM_NAME];
 
-# GRANT VIEW ANY COLUMN ENCRYPTION KEY DEFINITION TO [$VM_NAME];
+GRANT VIEW ANY COLUMN ENCRYPTION KEY DEFINITION TO [$VM_NAME];
 
-# ALTER DATABASE [$DATABASE_NAME]
-# SET QUERY_STORE (
-#     OPERATION_MODE = READ_WRITE,
-#     CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30),
-#     DATA_FLUSH_INTERVAL_SECONDS = 900,
-#     INTERVAL_LENGTH_MINUTES = 60,
-#     MAX_STORAGE_SIZE_MB = 2048,
-#     QUERY_CAPTURE_MODE = AUTO
-# );
-# "
+ALTER DATABASE [$DATABASE_NAME]
+SET QUERY_STORE (
+    OPERATION_MODE = READ_WRITE,
+    CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30),
+    DATA_FLUSH_INTERVAL_SECONDS = 900,
+    INTERVAL_LENGTH_MINUTES = 60,
+    MAX_STORAGE_SIZE_MB = 2048,
+    QUERY_CAPTURE_MODE = AUTO
+);
+"
 
-# echo "=========================================="
-# echo "Managed Identity user configured."
-# echo "Query Store configured."
-# echo "=========================================="
+echo "=========================================="
+echo "Managed Identity user configured."
+echo "Test user with password configured."
+echo "Query Store configured."
+echo "=========================================="
 
 
 
