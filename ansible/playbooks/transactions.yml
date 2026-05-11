@@ -1,0 +1,178 @@
+---
+- name: Run Azure SQL .NET Workloads
+  hosts: rhel_vm
+  become: true
+
+  vars:
+
+    project_root: "{{ playbook_dir }}/../.."
+
+    local_dotnet_scripts_dir: "{{ project_root }}/scripts/dotnet"
+
+    remote_scripts_dir: "/usr/local/azure-sql-workloads/dotnet"
+
+    remote_cache_dir: "/usr/local/azure-sql-workloads/cache"
+
+    batch_insert_batches: 25
+
+    batch_insert_delay_ms: 1000
+
+    batch_insert_log: "{{ remote_scripts_dir }}/batch-inserts/batch-inserts.log"
+
+    dotnet_install_dir: "/home/sqladmin/.dotnet"
+
+    dotnet_runtime_path: "/home/sqladmin/.dotnet:/usr/local/bin:/usr/bin:/bin"
+
+  tasks:
+
+    # =========================================================
+    # CREATE REMOTE DIRECTORY
+    # =========================================================
+
+    - name: Create remote scripts directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    - name: Create remote .NET cache directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+      loop:
+        - "{{ remote_cache_dir }}"
+        - "{{ remote_cache_dir }}/dotnet-cli"
+        - "{{ remote_cache_dir }}/nuget"
+        - "{{ remote_cache_dir }}/nuget/packages"
+        - "{{ remote_cache_dir }}/nuget/http-cache"
+        - "{{ remote_cache_dir }}/nuget/scratch"
+        - "{{ remote_cache_dir }}/tmp"
+
+    # =========================================================
+    # CREATE MANAGED IDENTITY DIRECTORY
+    # =========================================================
+
+    - name: Create managed identity project directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}/managed-identity-connection"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    # =========================================================
+    # CREATE BATCH INSERT DIRECTORY
+    # =========================================================
+
+    - name: Create batch inserts project directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}/batch-inserts"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    # =========================================================
+    # UPLOAD MANAGED IDENTITY FILES
+    # =========================================================
+
+    - name: Upload managed identity Program.cs
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/Program.cs"
+        dest: "{{ remote_scripts_dir }}/managed-identity-connection/Program.cs"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    - name: Upload managed identity csproj
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
+        dest: "{{ remote_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    # =========================================================
+    # UPLOAD BATCH INSERT FILES
+    # =========================================================
+
+    - name: Upload batch insert Program.cs
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/batch-inserts/Program.cs"
+        dest: "{{ remote_scripts_dir }}/batch-inserts/Program.cs"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    - name: Upload batch insert csproj
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/batch-inserts/batch-inserts.csproj"
+        dest: "{{ remote_scripts_dir }}/batch-inserts/batch-inserts.csproj"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    # =========================================================
+    # RUN MANAGED IDENTITY CONNECTION TEST
+    # =========================================================
+
+    - name: Run managed identity connection workload
+      ansible.builtin.shell:
+        cmd: |
+          rm -rf bin obj
+          dotnet restore --force --no-cache
+          dotnet build
+          dotnet run
+        chdir: "{{ remote_scripts_dir }}/managed-identity-connection"
+        executable: /bin/bash
+      become_user: sqladmin
+      environment:
+        SQL_SERVER_NAME: "{{ sql_server_name }}"
+        DATABASE_NAME: "{{ database_name }}"
+        DOTNET_ROOT: "{{ dotnet_install_dir }}"
+        DOTNET_CLI_HOME: "{{ remote_cache_dir }}/dotnet-cli"
+        NUGET_PACKAGES: "{{ remote_cache_dir }}/nuget/packages"
+        NUGET_HTTP_CACHE_PATH: "{{ remote_cache_dir }}/nuget/http-cache"
+        NUGET_SCRATCH: "{{ remote_cache_dir }}/nuget/scratch"
+        TMPDIR: "{{ remote_cache_dir }}/tmp"
+        PATH: "{{ dotnet_runtime_path }}"
+
+    # =========================================================
+    # RUN BATCH INSERT WORKLOAD
+    # =========================================================
+
+    - name: Run batch insert workload
+      ansible.builtin.shell:
+        cmd: |
+          rm -rf bin obj
+          dotnet nuget locals all --clear
+          dotnet restore --force --no-cache
+          dotnet build
+          rm -f "{{ batch_insert_log }}"
+          stdbuf -oL -eL dotnet run --no-build 2>&1 | tee "{{ batch_insert_log }}"
+        chdir: "{{ remote_scripts_dir }}/batch-inserts"
+        executable: /bin/bash
+        stdin: ""
+      become_user: sqladmin
+      register: batch_insert_output
+      environment:
+        SQL_SERVER_NAME: "{{ sql_server_name }}"
+        DATABASE_NAME: "{{ database_name }}"
+        MAX_BATCHES: "{{ batch_insert_batches }}"
+        BATCH_DELAY_MS: "{{ batch_insert_delay_ms }}"
+        DOTNET_ROOT: "{{ dotnet_install_dir }}"
+        DOTNET_CLI_HOME: "{{ remote_cache_dir }}/dotnet-cli"
+        NUGET_PACKAGES: "{{ remote_cache_dir }}/nuget/packages"
+        NUGET_HTTP_CACHE_PATH: "{{ remote_cache_dir }}/nuget/http-cache"
+        NUGET_SCRATCH: "{{ remote_cache_dir }}/nuget/scratch"
+        TMPDIR: "{{ remote_cache_dir }}/tmp"
+        PATH: "{{ dotnet_runtime_path }}"
+
+    - name: Print batch insert output
+      ansible.builtin.debug:
+        var: batch_insert_output.stdout_lines
