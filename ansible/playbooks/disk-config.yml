@@ -1,0 +1,144 @@
+---
+- name: Configure Azure RHEL Database Disks
+  hosts: rhel_vm
+  become: true
+
+  vars:
+    disk_layout:
+      - lun: 0
+        label: PRD_DATA01
+        mount: /u02
+
+      - lun: 1
+        label: PRD_LOG01
+        mount: /u03
+
+      - lun: 2
+        label: PRD_TEMP01
+        mount: /u04
+
+      - lun: 3
+        label: PRD_BKP01
+        mount: /u05
+
+
+    force_wipe: true # Set to true only if you want to override safeguards
+
+  tasks:
+
+    - name: Install required packages
+      package:
+        name:
+          - xfsprogs
+          - util-linux
+          - parted
+        state: present
+
+    - name: Resolve Azure LUN device mappings
+      shell: |
+        readlink -f /dev/disk/azure/scsi1/lun{{ item.lun }}
+      register: lun_mapping
+      loop: "{{ disk_layout }}"
+      changed_when: false
+
+    - name: Build disk facts
+      set_fact:
+        azure_disks: "{{ azure_disks | default([]) + [{'lun': item.item.lun, 'label': item.item.label, 'mount': item.item.mount, 'device': item.stdout}] }}"
+      loop: "{{ lun_mapping.results }}"
+
+    - name: Display resolved disks
+      debug:
+        var: azure_disks
+
+    - name: Create mount directories
+      file:
+        path: "{{ item.mount }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ azure_disks }}"
+
+    - name: Check existing filesystem type
+      shell: |
+        blkid -s TYPE -o value {{ item.device }}1 2>/dev/null || true
+      register: fs_check
+      loop: "{{ azure_disks }}"
+      changed_when: false
+
+    - name: Fail if filesystem exists and force_wipe is false
+      fail:
+        msg: "Filesystem already exists on {{ item.item.device }}1"
+      loop: "{{ fs_check.results }}"
+      when:
+        - item.stdout | trim not in ["", "none"]
+        - not force_wipe | bool
+
+    - name: Unmount existing filesystems if force_wipe enabled
+      shell: |
+        umount -lf {{ item.item.device }}1 || true
+        wipefs -a {{ item.item.device }} || true
+      loop: "{{ fs_check.results }}"
+      when:
+        - item.stdout | trim not in ["", "none"]
+        - force_wipe | bool
+      changed_when: false
+
+    - name: Create GPT partition table
+      community.general.parted:
+        device: "{{ item.device }}"
+        label: gpt
+        number: 1
+        state: present
+        part_start: 1MiB
+        part_end: 100%
+        fs_type: xfs
+      loop: "{{ azure_disks }}"
+
+    - name: Create XFS filesystem with labels only if needed
+      filesystem:
+        fstype: xfs
+        dev: "{{ item.item.device }}1"
+        opts: "-L {{ item.item.label }}"
+      loop: "{{ fs_check.results }}"
+      when:
+        - item.stdout | trim in ["", "none"]
+    - name: Get UUIDs
+      shell: |
+        blkid -s UUID -o value {{ item.device }}1 2>/dev/null || true      register: uuid_output
+      loop: "{{ azure_disks }}"
+      changed_when: false
+
+    - name: Build UUID facts
+      set_fact:
+        disk_mounts: "{{ disk_mounts | default([]) + [{'mount': item.item.mount, 'uuid': item.stdout, 'label': item.item.label}] }}"
+      loop: "{{ uuid_output.results | default([]) }}"
+      when: item.stdout | trim != ""
+
+    - name: Backup fstab
+      copy:
+        src: /etc/fstab
+        dest: "/etc/fstab.backup.{{ ansible_date_time.iso8601_basic_short }}"
+        remote_src: true
+
+    - name: Persist mounts in fstab
+      ansible.posix.mount:
+        path: "{{ item.mount }}"
+        src: "UUID={{ item.uuid }}"
+        fstype: xfs
+        opts: defaults,noatime,nodiscard
+        state: mounted
+      loop: "{{ disk_mounts | default([]) }}"
+
+    - name: Verify mounts
+      shell: |
+        df -hT {{ item.mount }}
+      register: mount_verify
+      loop: "{{ disk_mounts | default([]) }}"
+      changed_when: false
+
+    - name: Display final mount configuration
+      debug:
+        msg: |
+          Mount: {{ item.mount }}
+          UUID : {{ item.uuid }}
+          Label : {{ item.label }}
+      loop: "{{ disk_mounts | default([]) }}"

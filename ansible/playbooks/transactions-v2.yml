@@ -19,6 +19,8 @@
 
     batch_insert_log: "{{ remote_scripts_dir }}/batch-inserts/batch-inserts.log"
 
+    concurrency_log: "{{ remote_scripts_dir }}/concurrency/concurrency.log"
+
     dotnet_install_dir: "/home/sqladmin/.dotnet"
 
     dotnet_runtime_path: "/home/sqladmin/.dotnet:/usr/local/bin:/usr/bin:/bin"
@@ -77,6 +79,31 @@
         group: sqladmin
         mode: '0755'
 
+    # # =========================================================
+    # # CREATE CONCURRENCY DIRECTORY
+    # # =========================================================
+
+    # - name: Create concurrency project directory
+    #   ansible.builtin.file:
+    #     path: "{{ remote_scripts_dir }}/concurrency"
+    #     state: directory
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0755'
+
+
+    # =========================================================
+    # CREATE CONCURRENCY V2 DIRECTORY
+    # =========================================================
+
+    - name: Create concurrency project directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}/concurrent-stress"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
     # =========================================================
     # UPLOAD MANAGED IDENTITY FILES
     # =========================================================
@@ -117,6 +144,47 @@
         group: sqladmin
         mode: '0644'
 
+    # # =========================================================
+    # # UPLOAD CONCURRENCY FILES
+    # # =========================================================
+
+    # - name: Upload concurrency Program.cs
+    #   ansible.builtin.copy:
+    #     src: "{{ local_dotnet_scripts_dir }}/concurrency/concurrency.cs"
+    #     dest: "{{ remote_scripts_dir }}/concurrency/Program.cs"
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0644'
+
+    # - name: Upload concurrency csproj
+    #   ansible.builtin.copy:
+    #     src: "{{ local_dotnet_scripts_dir }}/concurrency/batch-insert.csproj"
+    #     dest: "{{ remote_scripts_dir }}/concurrency/concurrency.csproj"
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0644'
+
+    # =========================================================
+    # UPLOAD CONCURRENCY FILES v2
+    # =========================================================
+
+    - name: Upload concurrency-v2 Program.cs
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/concurrent-stress/Program.cs"
+        dest: "{{ remote_scripts_dir }}/concurrent-stress/Program.cs"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    - name: Upload concurrency-v2 csproj
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/concurrent-stress/stress.csproj"
+        dest: "{{ remote_scripts_dir }}/concurrent-stress/stress.csproj"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+
     # =========================================================
     # RUN MANAGED IDENTITY CONNECTION TEST
     # =========================================================
@@ -130,6 +198,7 @@
           dotnet run
         chdir: "{{ remote_scripts_dir }}/managed-identity-connection"
         executable: /bin/bash
+      become: true
       become_user: sqladmin
       environment:
         SQL_SERVER_NAME: "{{ sql_server_name }}"
@@ -142,24 +211,35 @@
         TMPDIR: "{{ remote_cache_dir }}/tmp"
         PATH: "{{ dotnet_runtime_path }}"
 
+
     # =========================================================
-    # RUN BATCH INSERT WORKLOAD
+    # RUN CONCURRENCY WORKLOAD
     # =========================================================
 
-    - name: Run batch insert workload
-      ansible.builtin.shell:
-        cmd: |
-          rm -rf bin obj
-          dotnet nuget locals all --clear
-          dotnet restore --force --no-cache
-          dotnet build
-          rm -f "{{ batch_insert_log }}"
-          stdbuf -oL -eL dotnet run --no-build 2>&1 | tee "{{ batch_insert_log }}"
-        chdir: "{{ remote_scripts_dir }}/batch-inserts"
+    - name: Run concurrency workload
+      ansible.builtin.shell: |
+        rm -rf bin obj
+
+        dotnet nuget locals all --clear
+
+        dotnet restore --force --no-cache
+
+        dotnet build
+
+        rm -f "{{ concurrency_log }}"
+
+        stdbuf -oL -eL \
+        dotnet run --project stress.csproj --no-build \
+        2>&1 | tee "{{ concurrency_log }}"
+
+      args:
+        chdir: "{{ remote_scripts_dir }}/concurrent-stress"
         executable: /bin/bash
-        stdin: ""
+      become: true
       become_user: sqladmin
-      register: batch_insert_output
+
+      register: concurrency_output
+
       environment:
         SQL_SERVER_NAME: "{{ sql_server_name }}"
         DATABASE_NAME: "{{ database_name }}"
@@ -173,6 +253,42 @@
         TMPDIR: "{{ remote_cache_dir }}/tmp"
         PATH: "{{ dotnet_runtime_path }}"
 
-    - name: Print batch insert output
+    - name: Print concurrency workload output
       ansible.builtin.debug:
-        var: batch_insert_output.stdout_lines
+        var: concurrency_output.stdout_lines
+
+    # # =========================================================
+    # # RUN BATCH INSERT WORKLOAD
+    # # =========================================================
+
+    # - name: Run batch insert workload
+    #   ansible.builtin.shell:
+    #     cmd: |
+    #       rm -rf bin obj
+    #       dotnet nuget locals all --clear
+    #       dotnet restore --force --no-cache
+    #       dotnet build
+    #       rm -f "{{ batch_insert_log }}"
+    #       stdbuf -oL -eL dotnet run --no-build 2>&1 | tee "{{ batch_insert_log }}"
+    #     chdir: "{{ remote_scripts_dir }}/batch-inserts"
+    #     executable: /bin/bash
+    #     stdin: ""
+    #   become_user: sqladmin
+    #   become: true
+    #   register: batch_insert_output
+    #   environment:
+    #     SQL_SERVER_NAME: "{{ sql_server_name }}"
+    #     DATABASE_NAME: "{{ database_name }}"
+    #     MAX_BATCHES: "{{ batch_insert_batches }}"
+    #     BATCH_DELAY_MS: "{{ batch_insert_delay_ms }}"
+    #     DOTNET_ROOT: "{{ dotnet_install_dir }}"
+    #     DOTNET_CLI_HOME: "{{ remote_cache_dir }}/dotnet-cli"
+    #     NUGET_PACKAGES: "{{ remote_cache_dir }}/nuget/packages"
+    #     NUGET_HTTP_CACHE_PATH: "{{ remote_cache_dir }}/nuget/http-cache"
+    #     NUGET_SCRATCH: "{{ remote_cache_dir }}/nuget/scratch"
+    #     TMPDIR: "{{ remote_cache_dir }}/tmp"
+    #     PATH: "{{ dotnet_runtime_path }}"
+
+    # - name: Print batch insert output
+    #   ansible.builtin.debug:
+    #     var: batch_insert_output.stdout_lines

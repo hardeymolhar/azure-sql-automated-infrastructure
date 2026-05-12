@@ -1,6 +1,6 @@
 ---
 - name: Install and configure SQL Server 2022 on RHEL 9
-  hosts: linux_vm
+  hosts: rhel_vm
   become: true
   gather_facts: true
 
