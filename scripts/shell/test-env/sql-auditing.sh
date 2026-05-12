@@ -6,11 +6,18 @@ set -euo pipefail
 # Override these values when running the script if needed:
 #   RESOURCE_GROUP="my-rg" SERVER_NAME="my-server" DB_NAME="my-db" ./sql-auditing.sh
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+
 RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
-LOCATION="${LOCATION:-eastus}"
+LOCATION="$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)"
 SERVER_NAME="${SERVER_NAME:-$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
 )}"
 DB_NAME="${DB_NAME:-demo-db}"
@@ -20,25 +27,27 @@ RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
 
 
 if [[ -z "$RESOURCE_GROUP" ]]; then
-  echo "No resource group found. Set RESOURCE_GROUP before running this script."
+  echo -e "${RED}No resource group found. Set RESOURCE_GROUP before running this script.${NC}"
   exit 1
 fi
 
 if [[ -z "$SERVER_NAME" ]]; then
-  echo "No Azure SQL server found. Set SERVER_NAME before running this script."
+  echo -e "${RED}No Azure SQL server found. Set SERVER_NAME before running this script.${NC}"
   exit 1
 fi
 
-echo "Resource group: $RESOURCE_GROUP"
-echo "SQL server:     $SERVER_NAME"
-echo "Database:       $DB_NAME"
-echo "Workspace:      $LAW_NAME"
+echo -e "${GREEN}Resource group: $RESOURCE_GROUP${NC}"
+echo -e "${GREEN}SQL server:     $SERVER_NAME${NC}"
+echo -e "${GREEN}Database:       $DB_NAME${NC}"
+echo -e "${GREEN}Workspace:      $LAW_NAME${NC}"
 
+
+echo -e "${YELLOW}Configuring Azure SQL auditing...${NC}"
 # Create the Log Analytics workspace if it does not already exist.
 if ! az monitor log-analytics workspace show \
   --resource-group "$RESOURCE_GROUP" \
@@ -59,6 +68,7 @@ LAW_RESOURCE_ID=$(az monitor log-analytics workspace show \
   --query id \
   -o tsv)
 
+echo -e "${YELLOW} Updating audit policies...${NC}"
 # Server-level auditing.
 az sql server audit-policy update \
   --resource-group "$RESOURCE_GROUP" \
@@ -86,17 +96,17 @@ az sql db audit-policy update \
   DATABASE_PERMISSION_CHANGE_GROUP
 
 
-echo "Server audit policy:"
+echo -e "${BLUE}Server audit policy:${NC}"
 az sql server audit-policy show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$SERVER_NAME" \
   -o table
 
-echo "Database audit policy:"
+echo -e "${BLUE}Database audit policy:${NC}"
 az sql db audit-policy show \
   --resource-group "$RESOURCE_GROUP" \
   --server "$SERVER_NAME" \
   --name "$DB_NAME" \
   -o table
 
-echo "Auditing configured successfully."
+echo -e "${GREEN}Auditing configured successfully.${NC}"

@@ -1,21 +1,27 @@
 #!/bin/bash
 set -euo pipefail
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 SQL_SERVER_NAME="${SERVER_NAME:-$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)}"
 SQL_SERVER_NAME="$(printf '%s' "$SQL_SERVER_NAME" | tr -d '[:space:]')"
 SQL_SERVER_FQDN="${SQL_SERVER_NAME}.database.windows.net"
 
 if [[ -z "$SQL_SERVER_NAME" ]]; then
-  echo "ERROR: No Azure SQL server found. Set SERVER_NAME before running this script."
+  echo -e "${RED}ERROR: No Azure SQL server found. Set SERVER_NAME before running this script.${NC}"
   exit 1
 fi
 
-echo "SQL Server: $SQL_SERVER_NAME"
-echo "SQL FQDN:   $SQL_SERVER_FQDN"
+echo -e "${BLUE}SQL Server: $SQL_SERVER_NAME${NC}"
+echo -e "${BLUE}SQL FQDN:   $SQL_SERVER_FQDN${NC}"
 
 DISPLAY_NAME=$(az ad signed-in-user show \
     --query userPrincipalName \
@@ -27,9 +33,9 @@ DISPLAY_NAME=$(az ad signed-in-user show \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
-echo "VM Name: $VM_NAME"
+echo -e "${BLUE}VM Name: $VM_NAME${NC}"
 
 DATABASE_NAME="demo-db"
 
@@ -88,10 +94,10 @@ az account get-access-token \
 
 VM_NAME=$(az vm list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
 
-echo "VM Name: $VM_NAME"
+echo -e "${BLUE}VM Name: $VM_NAME${NC}"
 
 # ==========================================
 # EXECUTE SQL COMMANDS
@@ -149,11 +155,11 @@ SET QUERY_STORE (
 );
 "
 
-echo "=========================================="
-echo "Managed Identity user configured."
-echo "Test user with password configured."
-echo "Query Store configured."
-echo "=========================================="
+echo -e "${GREEN}=========================================="
+echo -e "${GREEN}Managed Identity user configured.${NC}"
+echo -e "${GREEN}Test user with password configured.${NC}"
+echo -e "${GREEN}Query Store configured.${NC}"
+echo -e "${GREEN}==========================================${NC}"
 
 
 
@@ -169,10 +175,6 @@ echo "=========================================="
   -G \
   -P "$ACCESS_TOKEN_FILE" \
   -Q "
-
--- ==========================================
--- CREATE TABLE IF NOT EXISTS
--- ==========================================
 
 -- ==========================================
 -- CREATE TABLE IF NOT EXISTS
@@ -490,10 +492,9 @@ WITH (
 END;
 "
 
-echo "=========================================="
-echo "Secure transaction table deployed."
-echo "=========================================="
-
+echo -e "${GREEN}==========================================${NC}"
+echo -e "${GREEN}Secure transaction table deployed.${NC}"
+echo -e "${GREEN}==========================================${NC}"
 
 
 

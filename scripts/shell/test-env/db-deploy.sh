@@ -1,63 +1,93 @@
+#!/bin/bash
+
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 
 INVENTORY_FILE="$PROJECT_ROOT/inventory.ini"
 
-
-#!/bin/bash
-
-set -e
-
-# echo "STEP 1 - Azure Login"
-# ./login.sh
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
 
-# echo "STEP 2 - Deploy Key Vault"
+set -euo pipefail
+
+
+# echo -e "${BLUE}Baseline:  variables configuration pre deployment...${NC}"
+# ./var-config.sh
+
+# echo -e "${BLUE}STEP 1 - Deploy Key Vault${NC}"
 # ./key-vault.sh
 
-# echo "STEP 3 - Deploy Application VM"
+# echo -e "${BLUE}STEP 2 - Configure Disk Encryption Set and Encrypted Disks${NC}"
+# ./encrypted-mgd-disks.sh
+
+# echo -e "${BLUE}STEP 3  - Deploy Application VM${NC}"
 # ./app-vm.sh
 
-# echo "STEP 4 - Configure Application VM Using Ansible"
+# echo -e "${BLUE}STEP 4 - Configure Application VM Using Ansible${NC}"
 # ./vm-config.sh
 
-# echo "STEP 5 - Deploy Azure SQL Database"
+# echo -e "${BLUE}STEP 5 - Deploy Azure SQL Database${NC}"
 # ./sql-db.sh
 
-# echo "STEP 6 - Configure Entra Admin"
+# echo -e "${BLUE}STEP 6 - Configure Azure SQL Alerts and Notifications${NC}"
+# ./sql-alert.sh
+
+# echo -e "${BLUE}STEP 7 - Configure Entra Administrator${NC}"
 # ./set-entra-admin.sh
 
-# echo "STEP 9 - Enable SQL Auditing"
+# echo -e "${BLUE}STEP 8 - Enable Azure SQL Auditing${NC}"
 # ./sql-auditing.sh
 
-# echo "STEP 11 - Configure Diagnostic Settings"
+# echo -e "${BLUE}STEP 9 - Configure Azure SQL Diagnostic Settings${NC}"
 # ./diag-settings.sh
 
-# echo "STEP 8 - Configure SQL Backup Policies"
+# echo -e "${BLUE}STEP 10 - Configure Azure SQL Backup Policies${NC}"
 # ./sqldb-backup.sh
-# echo "Configure AEK Waiting 2 minutes before continuing."
+
+# echo -e "${YELLOW}Waiting 2 minutes for Always Encrypted and CMK dependencies to propagate...${NC}"
 # sleep 120
 
-
-# echo "STEP 7 - SQL Initialization and Query Store Setup"
+# echo -e "${BLUE}STEP 11 - Initialize Database and Configure Query Store${NC}"
 # ./identity.sh
+
+# =========================================================
+# SANDBOX ENVIRONMENT NOTES
+# =========================================================
+#
+# This deployment targets the Whizlabs Azure sandbox environment,
+# which is time-bound and provisioned dynamically.
+#
+# Resource names, suffixes, and identifiers may vary between sessions,
+# but the deployment workflow and orchestration process remain consistent.
+#
+# The sandbox creates resource groups in deterministic order.
+# Index [1] consistently maps to the preferred deployment resource group
+# used for this lab environment.
+#
+# This approach intentionally optimizes for rapid deployment and
+# reproducibility within constrained sandbox time limits.
+# =========================================================
 
 
 echo "Fetching Azure outputs..."
 
 LIN_VM_IP=$(az vm list-ip-addresses \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --name "vm-2348112" \
+  --name "vm-99999990" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 
 LIN_VM_NAME=$(az vm list \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
 
 SQL_SERVER_NAME=$(az sql server list \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
   
 
@@ -68,13 +98,17 @@ DATABASE_NAME=$(az sql db list \
   -o tsv)
 
 
-echo "STEP 8 - Configure CMK using PowerShell..."
-
-echo "Running SQL Config playbook..."
+echo -e "${YELLOW}Running SQL Config playbook...${NC}"
 
 ANSIBLE_CONFIG=$PROJECT_ROOT/ansible.cfg ansible-playbook \
-  $PROJECT_ROOT/ansible/playbooks/transactions.yml \
+  $PROJECT_ROOT/ansible/playbooks/transactions-v2.yml \
   -i $INVENTORY_FILE \
-  --extra-vars "sql_server_name=$SQL_SERVER_NAME database_name=$DATABASE_NAME"
+  --extra-vars "sql_server_name=$SQL_SERVER_NAME \
+  database_name=$DATABASE_NAME \
+  worker_count=6 \
+  max_batches=25 \
+  min_batch_size=500 \
+  max_batch_size=3000 \
+  batch_delay_ms=100"
 
-echo "DEPLOYMENT PIPELINE COMPLETED"
+echo -e "${GREEN}DEPLOYMENT PIPELINE COMPLETED${NC}"

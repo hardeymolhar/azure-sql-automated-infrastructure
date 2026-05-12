@@ -6,13 +6,19 @@ set -euo pipefail
 # VARIABLES
 # =========================================================
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
 
 LOCATION=$(az group show \
   --name "$RESOURCE_GROUP" \
   --query "location" -o tsv)
 
-SERVER_NAME="sqlserver-2348112"
+SERVER_NAME="sqlserver-99999990"
 
 DB_NAME="demo-db"
 
@@ -26,13 +32,13 @@ VM_FIREWALL_RULE_NAME="AllowVMIP"
 
 VM_IP=$(az vm list-ip-addresses \
   --resource-group "$RESOURCE_GROUP" \
-  --name "vm-2348112" \
+  --name "vm-99999990" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 
 KV_NAME=$(az keyvault list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-2348112')].name | [0]" \
+  --query "[?contains(name, '-99999990')].name | [0]" \
   -o tsv)
 
 TDE_KEY_ID=$(az keyvault key show \
@@ -46,7 +52,7 @@ TDE_KEY_ID=$(az keyvault key show \
 
 if ! az group exists --name "$RESOURCE_GROUP" | grep -q true
 then
-    echo "ERROR: Resource group does not exist"
+    echo -e "${RED}ERROR: Resource group does not exist${NC}"
     exit 1
 fi
 
@@ -58,7 +64,7 @@ MY_IP=$(curl -s https://api.ipify.org)
 
 if [[ -z "$MY_IP" ]]
 then
-    echo "ERROR: Failed to retrieve public IP"
+    echo -e "${RED}ERROR: Failed to retrieve public IP${NC}"
     exit 1
 fi
 
@@ -66,7 +72,7 @@ fi
 # STEP 1 — CREATE SQL SERVER
 # =========================================================
 
-echo "Creating Azure SQL logical server..."
+echo -e "${YELLOW}Creating Azure SQL logical server...${NC}"
 
 if az sql server show \
     --name "$SERVER_NAME" \
@@ -74,7 +80,7 @@ if az sql server show \
     &>/dev/null
 then
 
-    echo "SQL Server exists: $SERVER_NAME"
+    echo -e "${GREEN}SQL Server exists: $SERVER_NAME${NC}"
 
 else
 
@@ -92,7 +98,7 @@ fi
 # STEP 2 — CREATE FIREWALL RULES
 # =========================================================
 
-echo "Creating firewall rules..."
+echo -e "${YELLOW}Creating firewall rules...${NC}"
 
 if az sql server firewall-rule show \
     --resource-group "$RESOURCE_GROUP" \
@@ -101,7 +107,7 @@ if az sql server firewall-rule show \
     &>/dev/null
 then
 
-    echo "Client firewall rule exists"
+    echo -e "${GREEN}Client firewall rule exists${NC}"
 
 else
 
@@ -121,7 +127,7 @@ if az sql server firewall-rule show \
     &>/dev/null
 then
 
-    echo "VM firewall rule exists"
+    echo -e "${GREEN}VM firewall rule exists${NC}"
 
 else
 
@@ -138,7 +144,7 @@ fi
 # STEP 3 — CREATE DATABASE
 # =========================================================
 
-echo "Creating database..."
+echo -e "${YELLOW}Creating database...${NC}"
 
 if az sql db show \
     --resource-group "$RESOURCE_GROUP" \
@@ -147,7 +153,7 @@ if az sql db show \
     &>/dev/null
 then
 
-    echo "Database exists: $DB_NAME"
+    echo -e "${GREEN}Database exists: $DB_NAME${NC}"
 
 else
 
@@ -182,7 +188,7 @@ POLICY_EXISTS=$(az keyvault show \
 if [[ "$POLICY_EXISTS" == "$SQL_MI" ]]
 then
 
-    echo "Key Vault policy exists"
+    echo -e "${GREEN}Key Vault policy exists${NC}"
 
 else
 
@@ -207,7 +213,7 @@ if az sql server key show \
     &>/dev/null
 then
 
-    echo "SQL Server key exists"
+    echo -e "${GREEN}SQL Server key exists${NC}"
 
 else
 
@@ -222,7 +228,7 @@ fi
 # STEP 7 — CONFIGURE TDE PROTECTOR
 # =========================================================
 
-echo "Checking TDE protector configuration..."
+echo -e "${YELLOW}Checking TDE protector configuration...${NC}"
 
 CURRENT_TDE_KEY=$(
     az sql server tde-key show \
@@ -235,7 +241,7 @@ CURRENT_TDE_KEY=$(
 if [[ -z "$CURRENT_TDE_KEY" ]]
 then
 
-    echo "Setting TDE protector..."
+    echo -e "${YELLOW}Setting TDE protector...${NC}"
 
     az sql server tde-key set \
         --server "$SERVER_NAME" \
@@ -246,11 +252,11 @@ then
 elif [[ "$CURRENT_TDE_KEY" == "$TDE_KEY_ID" ]]
 then
 
-    echo "TDE protector already configured"
+    echo -e "${GREEN}TDE protector already configured${NC}"
 
 else
 
-    echo "Updating TDE protector..."
+    echo -e "${YELLOW}Updating TDE protector...${NC}"
 
     az sql server tde-key set \
         --server "$SERVER_NAME" \
@@ -264,8 +270,7 @@ fi
 # COMPLETE
 # =========================================================
 
-echo ""
-echo "Deployment complete"
-echo "SQL Server : $SERVER_NAME"
-echo "Database   : $DB_NAME"
-echo "Public IP  : $MY_IP"
+echo -e "${GREEN}Deployment complete${NC}"
+echo -e "${GREEN}SQL Server : $SERVER_NAME${NC}"
+echo -e "${GREEN}Database   : $DB_NAME${NC}"
+echo -e "${GREEN}Public IP  : $MY_IP${NC}"

@@ -1,14 +1,20 @@
 set -euo pipefail
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
-LOCATION="eastus"
+LOCATION="$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)"
 
 
 
 SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
 SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
 
-KV_NAME="kv-2348112"
+KV_NAME="kv-99999990"
 
 
 
@@ -23,9 +29,9 @@ MY_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
 
 if az keyvault show --name "$KV_NAME" >/dev/null 2>&1
 then
-    echo "Key Vault already exists: $KV_NAME"
+    echo -e "${GREEN}Key Vault already exists: $KV_NAME${NC}"
 else
-    echo "Creating Key Vault: $KV_NAME"
+    echo -e "${YELLOW}Creating Key Vault: $KV_NAME${NC}"
 
     az keyvault create \
       --name "$KV_NAME" \
@@ -46,7 +52,7 @@ if az keyvault network-rule list \
     --query "ipRules[?value=='$CLIENT_IP']" \
     -o tsv | grep -q "$CLIENT_IP"
 then
-    echo "IP rule already exists: $CLIENT_IP"
+    echo -e "${GREEN}IP rule already exists: $CLIENT_IP${NC}"
 else
     az keyvault network-rule add \
       --name "$KV_NAME" \
@@ -60,7 +66,7 @@ if az keyvault network-rule list \
     --query "ipRules[?value=='$CLIENT_IP']" \
     -o tsv | grep -q "$CLIENT_IP"
 then
-    echo "IP rule already exists: $CLIENT_IP"
+    echo -e "${GREEN}IP rule already exists: $CLIENT_IP${NC}"
 else
     az keyvault network-rule add \
       --name "$KV_NAME" \
@@ -73,7 +79,7 @@ echo "Waiting for Key Vault DNS propagation..."
 
 until nslookup "${KV_NAME}.vault.azure.net" >/dev/null 2>&1
 do
-    echo "Key Vault endpoint not ready yet..."
+    echo -e "${YELLOW}Key Vault endpoint not ready yet...${NC}"
     sleep 10
 done
 
@@ -111,6 +117,22 @@ else
       --kty RSA \
       --size 2048 \
       --ops wrapKey unwrapKey sign verify encrypt decrypt
+fi
+
+
+if az keyvault key show \
+    --vault-name "$KV_NAME" \
+    --name "des-encrypted-key" \
+    &>/dev/null
+then
+    echo "Key already exists: des-encrypted-key"
+else
+    az keyvault key create \
+      --vault-name "$KV_NAME" \
+      --name "dess-encrypted-key" \
+      --kty RSA \
+      --size 2048 \
+      --ops wrapKey unwrapKey 
 fi
 # ==========================================
 # UPLOAD SSH PRIVATE KEY
@@ -154,9 +176,9 @@ AE_KEY_ID=$(az keyvault key show \
   --query key.kid -o tsv)
 
 
-echo "Key Vault setup complete. Always Encrypted Key ID: $AE_KEY_ID"
-echo "Key Vault Name: $KV_NAME"
-echo "Key Vault ID: $(az keyvault show --name $KV_NAME --query id -o tsv)"
+echo -e "${GREEN}Key Vault setup complete. Always Encrypted Key ID: $AE_KEY_ID${NC}"
+echo -e "${GREEN}Key Vault Name: $KV_NAME${NC}"
+echo -e "${GREEN}Key Vault ID: $(az keyvault show --name $KV_NAME --query id -o tsv)${NC}"
 
 
 

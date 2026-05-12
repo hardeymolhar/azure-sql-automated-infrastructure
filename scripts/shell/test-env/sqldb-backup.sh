@@ -1,12 +1,20 @@
 #!/bin/bash
-
 set -euo pipefail
+
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+
 
 RESOURCE_GROUP="$(az group list --query '[1].name' -o tsv)"
 
 SERVER_NAME="$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?name != null && contains(name, '-2348112')].name | [0]" \
+  --query "[?name != null && contains(name, '-99999990')].name | [0]" \
   -o tsv
 )"
 
@@ -28,14 +36,14 @@ if [[ -z "$DB_NAME" ]]; then
     exit 1
 fi
 
-echo "Resource group: $RESOURCE_GROUP"
-echo "SQL server:     $SERVER_NAME"
-echo "Database:       $DB_NAME"
+echo -e "${BLUE}Resource group: $RESOURCE_GROUP${NC}"
+echo -e "${BLUE}SQL server:     $SERVER_NAME${NC}"
+echo -e "${BLUE}Database:       $DB_NAME${NC}"
 
 # =========================================================
 # SHORT-TERM RETENTION (STR)
 # =========================================================
-echo "Configuring STR policy..."
+echo -e "${YELLOW}Configuring STR policy...${NC}"
 
 az sql db str-policy set \
   --resource-group "$RESOURCE_GROUP" \
@@ -53,7 +61,7 @@ MONTHLY_RETENTION="P12M"
 YEARLY_RETENTION="P7Y"
 WEEK_OF_YEAR=26
 
-echo "Configuring LTR policy..."
+echo -e "${YELLOW}Configuring LTR policy...${NC}"
 
 az sql db ltr-policy set \
     --resource-group "$RESOURCE_GROUP" \
@@ -68,7 +76,7 @@ az sql db ltr-policy set \
 # VERIFY STR
 # =========================================================
 
-echo "Verifying STR policy..."
+echo -e "${YELLOW}Verifying STR policy...${NC}"
 
 az sql db str-policy show \
     --resource-group "$RESOURCE_GROUP" \
@@ -80,7 +88,7 @@ az sql db str-policy show \
 # VERIFY LTR
 # =========================================================
 
-echo "Verifying LTR policy..."
+echo -e "${YELLOW}Verifying LTR policy...${NC}"
 
 az sql db ltr-policy show \
     --resource-group "$RESOURCE_GROUP" \

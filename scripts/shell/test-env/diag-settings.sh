@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 # ==========================================
 # Azure SQL DB Monitoring Bootstrap
 # Idempotent Version
@@ -32,7 +39,7 @@ DIAG_SETTING_NAME="sql-db-diagnostics"
 # VALIDATION
 # ==========================================
 
-echo "Validating Azure SQL Database existence..."
+echo -e "${YELLOW}Validating Azure SQL Database existence...${NC}"
 
 if ! az sql db show \
     --resource-group "$RESOURCE_GROUP" \
@@ -40,11 +47,11 @@ if ! az sql db show \
     --name "$DATABASE_NAME" \
     >/dev/null 2>&1; then
 
-    echo "ERROR: Database '$DATABASE_NAME' does not exist."
+    echo -e "${RED}ERROR: Database '$DATABASE_NAME' does not exist.${NC}"
     exit 1
 fi
 
-echo "Database exists."
+echo -e "${GREEN}Database exists.${NC}"
 
 # ==========================================
 # GET RESOURCE IDS
@@ -61,18 +68,18 @@ SQL_DB_ID=$(az sql db show \
 # CREATE LOG ANALYTICS WORKSPACE IF NEEDED
 # ==========================================
 
-echo "Checking Log Analytics Workspace..."
+echo -e "${YELLOW}Checking Log Analytics Workspace...${NC}"
 
 if az monitor log-analytics workspace show \
     --resource-group "$LOG_ANALYTICS_RG" \
     --workspace-name "$LOG_ANALYTICS_NAME" \
     >/dev/null 2>&1; then
 
-    echo "Log Analytics Workspace already exists."
+    echo -e "${GREEN}Log Analytics Workspace already exists.${NC} Skipping creation."
 
 else
 
-    echo "Creating Log Analytics Workspace..."
+    echo -e "${YELLOW}Creating Log Analytics Workspace...${NC}"
 
     az monitor log-analytics workspace create \
       --resource-group "$LOG_ANALYTICS_RG" \
@@ -91,7 +98,7 @@ LAW_ID=$(az monitor log-analytics workspace show \
 # CREATE DIAGNOSTIC SETTINGS IF NEEDED
 # ==========================================
 
-echo "Checking diagnostic settings..."
+echo -e "${YELLOW}Checking diagnostic settings...${NC}"
 
 EXISTING_DIAG=$(az monitor diagnostic-settings show \
   --resource "$SQL_DB_ID" \
@@ -101,11 +108,11 @@ EXISTING_DIAG=$(az monitor diagnostic-settings show \
 
 if [[ "$EXISTING_DIAG" == "$DIAG_SETTING_NAME" ]]; then
 
-    echo "Diagnostic setting already exists. Skipping."
+    echo -e "${GREEN}Diagnostic setting already exists. Skipping.${NC}"
 
 else
 
-    echo "Creating diagnostic settings..."
+    echo -e "${YELLOW}Creating diagnostic settings...${NC}"
 
     az monitor diagnostic-settings create \
       --name "$DIAG_SETTING_NAME" \
@@ -157,6 +164,6 @@ else
         }
       ]'
 
-    echo "Diagnostic settings created."
+    echo -e "${GREEN}Diagnostic settings created.${NC}"
 
 fi
