@@ -1,6 +1,11 @@
+# Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability
 
-# Design and Deployment of Secure Azure SQL PaaS with Cross-Region High Availability 
-
+![GitHub release](https://img.shields.io/github/v/release/hardeymolhar/azure-sql-automated-infrastructure)
+![CI](https://github.com/hardeymolhar/azure-sql-automated-infrastructure/actions/workflows/ci.yml/badge.svg)
+![Azure](https://img.shields.io/badge/Azure-SQL-blue)
+![Terraform](https://img.shields.io/badge/Terraform-IaC-purple)
+![Ansible](https://img.shields.io/badge/Ansible-Automation-red)
+![Dotnet](https://img.shields.io/badge/.NET-8.0-512BD4)
 
 ## 🔴 Problem Overview
 
@@ -294,13 +299,11 @@ This demonstration validates:
 
 - Azure Key Vault integration
 - Column Master Key (CMK) and Column Encryption Key (CEK) configuration
-- client-side encryption using .NET SqlClient
-- ciphertext protection in Azure SQL
-- successful encrypted batch inserts using Managed Identity authentication
+- client-side encryption using Powershell SqlClient
 
 ![Always Encrypted](docs/images/always-encrypted.png)
 
-[![Watch Demo Video](https://img.shields.io/badge/Watch-Always_Encrypted_Demo-0078D4?style=for-the-badge&logo=microsoftazure)](https://github.com/user-attachments/assets/YOUR-VIDEO-ID)
+[![Watch Demo Video](https://img.shields.io/badge/Watch-Always_Encrypted_Demo-0078D4?style=for-the-badge&logo=microsoftazure)](docs/videos/always-encrypted.mp4)
 
 
 
@@ -319,8 +322,6 @@ Both Python and .NET implementations were evaluated during testing.
 | Azure Key Vault CMK Integration | Limited | Native |
 | Client-Side Decryption | Inconsistent | Fully Supported |
 
-
-Although Python successfully supported workload generation and Azure SQL connectivity, limitations were encountered when validating Always Encrypted operations using Azure Key Vault-backed Column Master Keys (CMKs).
 
 The .NET implementation became the primary workload engine because the official `Microsoft.Data.SqlClient` driver provides native support for:
 
@@ -431,4 +432,81 @@ flowchart LR
 
 ![Ansible Deployment](docs/images/ansible-demo.png)
 
-[![Watch Ansible Demo](https://img.shields.io/badge/Watch-Ansible_Demo-EE0000?style=for-the-badge&logo=ansible)](docs/images/ansible-demo.mp4)
+[![Watch Ansible Demo](https://img.shields.io/badge/Watch-Ansible_Demo-EE0000?style=for-the-badge&logo=ansible)](docs/videos/ansible-demo.mp4)
+
+
+
+
+
+
+
+## Sandbox Constraints and Deployment Tradeoffs
+
+This project was tested in the Whizlabs Azure sandbox environment.
+
+The sandbox is:
+
+- temporary
+- dynamically provisioned
+- identity restricted
+- time limited
+
+Because of these limitations, some engineering decisions were intentionally optimized for rapid deployment and testing rather than full production-style CI/CD automation.
+
+---
+
+## Key Constraint
+
+The sandbox does not allow:
+
+- RBAC Assignments to other identities
+- Federated Identity (OIDC)
+- Service Principal-based automation
+
+
+This means GitHub Actions cannot securely authenticate to Azure for full infrastructure deployment.
+
+---
+
+## Deployment Decision
+
+Because of the sandbox restrictions:
+
+| Purpose | Approach Used |
+|---|---|
+| Infrastructure Deployment | Local Bash Orchestration |
+| Azure Authentication | Local `az login` session |
+| VM Configuration | Ansible |
+| SQL Configuration | PowerShell |
+| Workload Simulation | .NET |
+
+
+
+---
+
+## Rapid Deployment Workflow
+
+```mermaid
+flowchart LR
+
+    A[Local Azure Login]
+
+    -->
+
+    B[Bash Deployment Orchestration]
+
+    -->
+
+    C[Azure Resource Deployment]
+
+    -->
+
+    D[Ansible VM Configuration]
+
+    -->
+
+    E[.NET Workload Execution]
+
+    -->
+
+    F[Azure SQL Stress Testing]
