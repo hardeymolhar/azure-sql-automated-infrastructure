@@ -14,7 +14,7 @@ set -euo pipefail
 # CONFIGURATION
 # =========================================================
 
-NEW_ID="99999990"
+NEW_ID="prd-ind-01"
 
 PROJECT_DIR="/Users/mac/Projects/azure-sql-automated-infrastructure"
 
@@ -51,15 +51,17 @@ find "$TARGET_DIR" \
   -path "*/.backups/*" -prune -o \
   -type f \
   \( -name "*.sh" -o -name "*.ps1" \) \
-  -print
+  -print | while read -r file; do
+
 
   # =========================================================
-  # DETECT DASHED 8-DIGIT IDENTIFIERS
+  # DETECT INFRASTRUCTURE RESOURCE IDENTIFIERS
   # =========================================================
 
-  if grep -Eq '\-[0-9]{8}\b' "$file"; then
+  if grep -Eq '\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-disk|log-disk|temp-disk|backup-disk)-[0-9a-zA-Z-]+\b' "$file"; then
 
     echo -e "${GREEN}Updating:${NC} $file"
+
 
     # =========================================================
     # CREATE UNIQUE BACKUP FILE
@@ -74,12 +76,14 @@ find "$TARGET_DIR" \
     echo -e "${BLUE}Backup created:${NC} $backup_file"
 
     # =========================================================
-    # REPLACE ONLY DASHED NUMERIC SUFFIXES
+    # REPLACE INFRASTRUCTURE RESOURCE SUFFIXES
     # Example:
-    # sql-des-99999990 -> sql-des-99999990
+    # vm-99999999 -> vm-prd-ind-01
+    # kv-99999999 -> kv-prd-ind-01
+    # sql-des-99999999 -> sql-des-prd-ind-01
     # =========================================================
 
-    perl -pi -e "s/-\K\d{8}(?=\b)/$NEW_ID/g" "$file"
+    perl -pi -e 's/\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-disk|log-disk|temp-disk|backup-disk)-[a-zA-Z0-9-]+\b/$1-'"$NEW_ID"'/g' "$file"
 
   fi
 
@@ -94,7 +98,7 @@ echo -e "${GREEN}Replacement complete.${NC}"
 echo -e "${BLUE}=========================================================${NC}"
 
 echo -e "${YELLOW}Modified files:${NC}"
-grep -R '\-[0-9]\{8\}\b' "$TARGET_DIR" || true
+grep -RE '\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-disk|log-disk|temp-disk|backup-disk)-[0-9a-zA-Z-]+\b' "$TARGET_DIR" || true
 
 echo -e "${BLUE}=========================================================${NC}"
 echo -e "${GREEN}Backup files stored in:${NC}"
