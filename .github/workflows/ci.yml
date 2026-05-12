@@ -1,0 +1,123 @@
+name: Infrastructure Validation CI
+
+on:
+
+  push:
+    branches:
+      - main
+
+  pull_request:
+
+jobs:
+
+  validate:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # =====================================================
+      # CHECKOUT REPOSITORY
+      # =====================================================
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # =====================================================
+      # INSTALL .NET
+      # =====================================================
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # =====================================================
+      # RESTORE .NET PROJECTS
+      # =====================================================
+
+      - name: Restore .NET Projects
+        run: |
+          find scripts/dotnet -name "*.csproj" \
+          -exec dotnet restore {} \;
+
+      # =====================================================
+      # BUILD .NET PROJECTS
+      # =====================================================
+
+      - name: Build .NET Projects
+        run: |
+          find scripts/dotnet -name "*.csproj" \
+          -exec dotnet build {} --no-restore \;
+
+      # =====================================================
+      # INSTALL PYTHON
+      # =====================================================
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # =====================================================
+      # INSTALL ANSIBLE TOOLING
+      # =====================================================
+
+      - name: Install Ansible + Lint Tools
+        run: |
+          pip install ansible ansible-lint yamllint
+
+      # =====================================================
+      # VALIDATE YAML
+      # =====================================================
+
+      - name: Run YAML Lint
+        run: |
+          yamllint .
+
+      # =====================================================
+      # VALIDATE ANSIBLE
+      # =====================================================
+
+      - name: Run Ansible Lint
+        run: |
+          ansible-lint ansible/playbooks/*.yml
+
+      # =====================================================
+      # INSTALL SHELLCHECK
+      # =====================================================
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      # =====================================================
+      # VALIDATE BASH SCRIPTS
+      # =====================================================
+
+      - name: Validate Bash Scripts
+        run: |
+          find . -name "*.sh" -exec shellcheck {} \;
+
+      # =====================================================
+      # INSTALL POWERSHELL
+      # =====================================================
+
+      - name: Install PowerShell
+        uses: PowerShell/PowerShell@v1
+
+      # =====================================================
+      # VALIDATE POWERSHELL SCRIPTS
+      # =====================================================
+
+      - name: Validate PowerShell Scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter *.ps1 |
+          ForEach-Object {
+            [void][System.Management.Automation.PSParser]::Tokenize(
+              (Get-Content $_.FullName -Raw),
+              [ref]$null
+            )
+          }

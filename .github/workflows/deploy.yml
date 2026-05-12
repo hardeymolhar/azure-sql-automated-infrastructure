@@ -1,0 +1,80 @@
+name: Azure Lab Deployment
+
+on:
+
+  workflow_dispatch:
+
+jobs:
+
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # =====================================================
+      # CHECKOUT REPOSITORY
+      # =====================================================
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # =====================================================
+      # AZURE LOGIN
+      # =====================================================
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # =====================================================
+      # INSTALL AZURE CLI
+      # =====================================================
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      # =====================================================
+      # INSTALL ANSIBLE
+      # =====================================================
+
+      - name: Install Ansible
+        run: |
+          pip install ansible
+
+      # =====================================================
+      # INSTALL DOTNET
+      # =====================================================
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # =====================================================
+      # INSTALL POWERSHELL
+      # =====================================================
+
+      - name: Install PowerShell
+        uses: PowerShell/PowerShell@v1
+
+      # =====================================================
+      # MAKE SCRIPTS EXECUTABLE
+      # =====================================================
+
+      - name: Set Execute Permissions
+        run: |
+          chmod +x scripts/bash/*.sh
+
+      # =====================================================
+      # RUN DEPLOYMENT PIPELINE
+      # =====================================================
+
+      - name: Execute Deployment Pipeline
+        working-directory: scripts/bash
+        run: |
+          ./deploy.sh
