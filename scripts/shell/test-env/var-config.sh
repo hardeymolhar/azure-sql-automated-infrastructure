@@ -49,7 +49,9 @@ echo -e "${BLUE}=========================================================${NC}"
 
 find "$TARGET_DIR" \
   -path "*/.backups/*" -prune -o \
-  -type f -name "*.sh" -print | while read -r file; do
+  -type f \
+  \( -name "*.sh" -o -name "*.ps1" \) \
+  -print
 
   # =========================================================
   # DETECT DASHED 8-DIGIT IDENTIFIERS
