@@ -510,12 +510,241 @@ Administrative users such as the Microsoft Entra administrator can view original
 
 
 
-### Secure Encryption Setup
+## Always Encrypted Demonstration
 
-Verified that sensitive database information is protected using Azure Always Encrypted technology.
+This demonstration validates:
 
-* Encryption keys were successfully configured
-* Azure Key Vault is securely storing the encryption keys
-* The database is correctly connected to the encryption system
+- Azure Key Vault integration
+- Column Master Key (CMK) and Column Encryption Key (CEK) configuration
+- client-side encryption using Powershell SqlClient
 
-![Admin View](images/always-encrypted.png)
+![Always Encrypted](docs/images/always-encrypted.png)
+
+[![Watch Demo Video](https://img.shields.io/badge/Watch-Always_Encrypted_Demo-0078D4?style=for-the-badge&logo=microsoftazure)](docs/videos/always-encrypted.mp4)
+
+
+
+
+
+
+## Workload Simulation and Validation
+
+This phase introduces a production-style workload simulator designed to stress Azure SQL Database under realistic transactional conditions.
+
+
+Both Python and .NET implementations were evaluated during testing.
+
+| Capability | Python (`pyodbc`) | .NET (`Microsoft.Data.SqlClient`) |
+|---|---|---|
+| Azure SQL Connectivity | ✅ | ✅ |
+| Managed Identity Authentication | ✅ | ✅ |
+| Batch Workloads | ✅ | ✅ |
+| Always Encrypted Support | Limited | Full |
+| Azure Key Vault CMK Integration | Limited | Native |
+| Client-Side Decryption | Inconsistent | Fully Supported |
+
+
+The workload engine was built using `.NET 8` and the official `Microsoft.Data.SqlClient` driver with native support for:
+
+- Always Encrypted
+- Azure Key Vault integration
+- Managed Identity authentication
+- client-side encryption and decryption
+- secure parameterized inserts
+- concurrent transactional workloads
+
+The simulator executes multiple workload patterns simultaneously to reproduce operational pressure commonly observed in financial transaction systems.
+
+
+
+## Workload Scripts
+
+| Directory | Purpose |
+|---|---|
+| [`./scripts/dotnet/`](./scripts/dotnet/) | Production-style Azure SQL workload simulator using .NET 8 with Always Encrypted, concurrent transactions, reporting queries, updates, deletes, and Managed Identity authentication |
+| [`./scripts/python/`](./scripts/python/) | Initial Azure SQL deployment and workload experimentation using Python |
+---
+
+## Concurrency Model
+
+```mermaid
+
+flowchart LR
+
+    A[Parallel Worker Tasks]
+
+    --> B[Independent SQL Connections]
+
+    --> C[Transactional Operations]
+
+    --> D[Azure SQL Database]
+
+    D --> E[Batch Inserts]
+
+    D --> F[Large Updates]
+
+    D --> G[Deletes]
+
+    D --> H[Reporting Queries]
+```
+
+
+# Automation Workflow
+
+Ansible will be used to automate the deployment process by configuring the Azure VM, installing required drivers and dependencies, and deploying the Python workload scripts automatically.
+
+The workload simulator will then execute realistic database activities such as:
+
+* Batch inserts for high-volume transaction ingestion
+* Concurrent database operations to simulate multiple workloads
+* Large updates and deletes to test transaction log and IO behavior
+
+
+``` mermaid
+flowchart LR
+
+    A[Use Ansible to Configure Azure VM
+    Install .NET 8 SDK • ODBC Drivers • SQL Tools]
+
+    -->
+
+    B[Deploy .NET Workload Scripts to the VM
+    Automated Provisioning and Execution]
+
+    -->
+
+    C[Connect Securely to Azure SQL
+    Using Managed Identity]
+
+    -->
+
+    D[Execute Realistic Database Workloads
+    Batch Inserts • Concurrent Operations • Updates • Deletes]
+
+    -->
+
+
+
+    E[Collect Azure SQL Metrics and Logs
+    DTU • CPU • Log IO • Data IO • Sessions]
+
+    -->
+
+    F[Analyze Database Performance,
+    Scalability, and Security Impact]
+
+```
+
+
+
+<h2>Playbooks and Automation Files</h2>
+
+<ul>
+  <li><a href="./ansible/playbooks/">Ansible Playbooks Directory</a></li>
+  <li><a href="./ansible/requirements.yml">Ansible Requirements File</a></li>
+</ul>
+
+<h2>Python Workload and Connectivity Scripts</h2>
+
+<ul>
+  <li>
+    <a href="./scripts/python/managed-identity-connection.py">
+      Establishing Connection Using Contained User With Managed Identity
+    </a>
+  </li>
+
+  <li>
+    <a href="./scripts/python/batch-inserts.py">
+      Batch Insert Workload Script
+    </a>
+  </li>
+
+  <li>
+    <a href="./scripts/python/concurrency.py">
+      Concurrency Workload Script
+    </a>
+  </li>
+</ul>
+
+
+
+![Ansible Deployment](docs/images/ansible-demo.png)
+
+[![Watch Ansible Demo](https://img.shields.io/badge/Watch-Ansible_Demo-EE0000?style=for-the-badge&logo=ansible)](docs/videos/ansible-demo.mp4)
+
+
+
+
+
+
+
+## Sandbox Constraints and Deployment Tradeoffs
+
+This project was tested in the Whizlabs Azure sandbox environment.
+
+The sandbox is:
+
+- temporary
+- dynamically provisioned
+- identity restricted
+- time limited
+
+Because of these limitations, some engineering decisions were intentionally optimized for rapid deployment and testing rather than full production-style CI/CD automation.
+
+---
+
+## Key Constraint
+
+The sandbox does not allow:
+
+- RBAC Assignments to other identities
+- Federated Identity (OIDC)
+- Service Principal-based automation
+
+
+This means GitHub Actions cannot securely authenticate to Azure for full infrastructure deployment.
+
+---
+
+## Deployment Decision
+
+Because of the sandbox restrictions:
+
+| Purpose | Approach Used |
+|---|---|
+| Infrastructure Deployment | Local Bash Orchestration |
+| Azure Authentication | Local `az login` session |
+| VM Configuration | Ansible |
+| SQL Configuration | PowerShell |
+| Workload Simulation | .NET |
+
+
+
+---
+
+## Rapid Deployment Workflow
+
+```mermaid
+flowchart LR
+
+    A[Local Azure Login]
+
+    -->
+
+    B[Bash Deployment Orchestration]
+
+    -->
+
+    C[Azure Resource Deployment]
+
+    -->
+
+    D[Ansible VM Configuration]
+
+    -->
+
+    E[.NET Workload Execution]
+
+    -->
+
+    F[Azure SQL Stress Testing]
