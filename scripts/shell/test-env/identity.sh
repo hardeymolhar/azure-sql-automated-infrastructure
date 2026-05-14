@@ -1,17 +1,8 @@
 #!/bin/bash
 set -euo pipefail
+source "$(dirname "$0")/env.conf"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
-RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
-SQL_SERVER_NAME="${SERVER_NAME:-$(az sql server list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
-  -o tsv)}"
 SQL_SERVER_NAME="$(printf '%s' "$SQL_SERVER_NAME" | tr -d '[:space:]')"
 SQL_SERVER_FQDN="${SQL_SERVER_NAME}.database.windows.net"
 
@@ -30,14 +21,8 @@ DISPLAY_NAME=$(az ad signed-in-user show \
 #========================
 # FETCH EXISTING VM NAME
 # =======================
-
-VM_NAME=$(az vm list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
-  -o tsv)
 echo -e "${BLUE}VM Name: $VM_NAME${NC}"
 
-DATABASE_NAME="demo-db"
 
 if [[ -x "/opt/homebrew/opt/mssql-tools18/bin/sqlcmd" ]]; then
   SQLCMD_BIN="/opt/homebrew/opt/mssql-tools18/bin/sqlcmd"
@@ -87,17 +72,6 @@ az account get-access-token \
 #   -N \
 #   -C
   
-
-# ==========================================
-# FETCH EXISTING VM NAME
-# ==========================================
-
-VM_NAME=$(az vm list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
-  -o tsv)
-
-echo -e "${BLUE}VM Name: $VM_NAME${NC}"
 
 # ==========================================
 # EXECUTE SQL COMMANDS
@@ -304,6 +278,18 @@ CREATE TABLE dbo.tbl_transactions_secure
 
     vat_inclusive BIT NULL
 );
+
+CREATE NONCLUSTERED INDEX IX_Count_Only
+ON dbo.tbl_transactions_secure (id);
+
+CREATE CLUSTERED INDEX IX_transactions_created_on
+ON dbo.tbl_transactions_secure(created_on);
+
+CREATE NONCLUSTERED INDEX IX_transactions_source_account
+ON dbo.tbl_transactions_secure(source_account_number);
+
+CREATE NONCLUSTERED INDEX IX_transactions_status
+ON dbo.tbl_transactions_secure(transaction_final_status);
 
 END;
 

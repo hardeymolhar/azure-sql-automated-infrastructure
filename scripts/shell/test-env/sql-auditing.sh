@@ -1,33 +1,16 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-
+source "$(dirname "$0")/env.conf"
 # Configure Azure SQL auditing at both logical server and database level.
 # Override these values when running the script if needed:
 #   RESOURCE_GROUP="my-rg" SERVER_NAME="my-server" DB_NAME="my-db" ./sql-auditing.sh
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-
-RESOURCE_GROUP="${RESOURCE_GROUP:-$(az group list --query "[1].name" -o tsv)}"
-LOCATION="$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)"
-SERVER_NAME="${SERVER_NAME:-$(az sql server list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
-  -o tsv)
-)}"
-DB_NAME="${DB_NAME:-demo-db}"
-LAW_NAME="${LAW_NAME:-sql-audit-law}"
-RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 
 SERVER_NAME=$(az sql server list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" \
   -o tsv)
 
 

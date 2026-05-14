@@ -1,57 +1,13 @@
 #!/bin/bash
-
+source "$(dirname "$0")/env.conf"
 set -euo pipefail
 
-# =========
-# VARIABLES
-# =========
-
-# =========================================================
-# COLORS
-# =========================================================
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-RESOURCE_GROUP="$(az group list --query "[1].name" -o tsv)"
-LOCATION="$(az group list --query "[1].location" -o tsv)"
-
-
-DATA_DISK="prd-rhel-db-data-01"
-LOG_DISK="prd-rhel-db-log-01"
-TEMP_DISK="prd-rhel-db-temp-01"
-BACKUP_DISK="prd-rhel-db-backup-01"
-VM_NAME="vm-99999990"
-VNET_NAME="vnet-99999990"
-SUBNET_NAME="subnet-99999990"
-NSG_NAME="nsg-99999990"
-NIC_NAME="nic-99999990"
-PUBLIC_IP_NAME="pip-99999990"
-SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-DES_NAME="sql-des-99999990"
 
 
 KV_NAME=$(az keyvault list \
   --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" \
   -o tsv)
-
-
-
-SSH_SECRET_NAME="vm-ssh-public-key"
-ADMIN_USERNAME="sqladmin"
-VM_SIZE="Standard_B2ms"
-IMAGE="RedHat:RHEL:9-lvm-gen2:latest"
-
-# ==========================================
-# GET CLIENT PUBLIC IP
-# ==========================================
-
-CLIENT_IP=$(curl -s ifconfig.me)
-echo -e "${GREEN}Client Public IP: ${NC}$CLIENT_IP"
 
 # ==========================================
 # FETCH PUBLIC SSH KEY FROM KEY VAULT
@@ -182,7 +138,8 @@ else
     --image "$IMAGE" \
     --size "$VM_SIZE" \
     --admin-username "$ADMIN_USERNAME" \
-    --ssh-key-values "$SSH_PUBLIC_KEY" \
+    --ssh-key-values "$SSH_PUBLIC_KEY_PATH" \
+    --os-disk-name "$OS_DISK" \
     --os-disk-size-gb 512 \
     --storage-sku StandardSSD_LRS \
     --assign-identity
@@ -386,5 +343,5 @@ echo -e "${GREEN}VM Name:${NC} $VM_NAME"
 echo -e "${GREEN}Public IP:${NC} $VM_PUBLIC_IP"
 echo ""
 echo -e "${GREEN}SSH Command:${NC}"
-echo -e "ssh -i /Users/mac/.ssh/ssh_key/vm-key/vm-key $ADMIN_USERNAME@$VM_PUBLIC_IP"
+echo -e "ssh -i /Users/mac/.ssh/ssh_key/vm_name/vm_name $ADMIN_USERNAME@$VM_PUBLIC_IP"
 echo -e "${GREEN}==========================================${NC}"

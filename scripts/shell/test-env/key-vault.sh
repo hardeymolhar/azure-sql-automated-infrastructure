@@ -1,30 +1,7 @@
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
-RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
-LOCATION="$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)"
-
-
-
-SSH_PRIVATE_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key"
-SSH_PUBLIC_KEY_PATH="/Users/mac/.ssh/ssh_key/vm-key/vm-key.pub"
-
-KV_NAME="kv-99999990"
-
-
-
-CLIENT_IP=$(curl -s https://api.ipify.org)
-
-TENANT_ID=$(az account show --query tenantId -o tsv)
-
-MY_OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
-
-
+source "$(dirname "$0")/env.conf"
 
 
 if az keyvault show --name "$KV_NAME" >/dev/null 2>&1
@@ -122,32 +99,46 @@ fi
 
 if az keyvault key show \
     --vault-name "$KV_NAME" \
-    --name "des-encrypted-key" \
+    --name "$DISK_ENCRYPTION_SET_KEY" \
     &>/dev/null
 then
-    echo "Key already exists: des-encrypted-key"
+    echo "Key already exists: $DISK_ENCRYPTION_SET_KEY"
 else
     az keyvault key create \
       --vault-name "$KV_NAME" \
-      --name "dess-encrypted-key" \
+      --name "$DISK_ENCRYPTION_SET_KEY" \
       --kty RSA \
       --size 2048 \
       --ops wrapKey unwrapKey 
 fi
+
+if az keyvault secret show \
+    --vault-name "$KV_NAME" \
+    --name "sql-admin-password" \
+    &>/dev/null
+then
+    echo "Secret already exists: sql-admin-password"
+else
+    az keyvault secret set \
+      --vault-name "$KV_NAME" \
+      --name "sql-admin-password" \
+      --value "$ADMIN_PASSWORD"
+fi
+
 # ==========================================
 # UPLOAD SSH PRIVATE KEY
 # ==========================================
 
 if az keyvault secret show \
     --vault-name "$KV_NAME" \
-    --name "vm-ssh-private-key" \
+    --name "$PRIVATE_SSH_SECRET_NAME" \
     &>/dev/null
 then
-    echo "Secret already exists: vm-ssh-private-key"
+    echo "Secret already exists: $PRIVATE_SSH_SECRET_NAME"
 else
     az keyvault secret set \
       --vault-name "$KV_NAME" \
-      --name "vm-ssh-private-key" \
+      --name "$PRIVATE_SSH_SECRET_NAME" \
       --file "$SSH_PRIVATE_KEY_PATH"
 fi
 
@@ -157,14 +148,14 @@ fi
 
 if az keyvault secret show \
     --vault-name "$KV_NAME" \
-    --name "vm-ssh-public-key" \
+    --name "$PUBLIC_SSH_SECRET_NAME" \
     &>/dev/null
 then
-    echo "Secret already exists: vm-ssh-public-key"
+    echo "Secret already exists: $PUBLIC_SSH_SECRET_NAME"
 else
     az keyvault secret set \
       --vault-name "$KV_NAME" \
-      --name "vm-ssh-public-key" \
+      --name "$PUBLIC_SSH_SECRET_NAME" \
       --file "$SSH_PUBLIC_KEY_PATH"
 fi
 

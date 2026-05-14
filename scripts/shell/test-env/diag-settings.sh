@@ -1,14 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
-
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
+source "$(dirname "$0")/env.conf"
 # ==========================================
 # Azure SQL DB Monitoring Bootstrap
 # Idempotent Version
@@ -16,24 +9,9 @@ NC='\033[0m' # No Color
 
 # ========= VARIABLES =========
 
-RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
-
-LOCATION=$(az group show \
-  --name "$RESOURCE_GROUP" \
-  --query "location" \
-  -o tsv)
-
-SQL_SERVER_NAME=$(az sql server list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[0].name" \
-  -o tsv)
-
-DATABASE_NAME="demo-db"
 
 LOG_ANALYTICS_RG="$RESOURCE_GROUP"
-LOG_ANALYTICS_NAME="sql-audit-law"
 
-DIAG_SETTING_NAME="sql-db-diagnostics"
 
 # ==========================================
 # VALIDATION

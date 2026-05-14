@@ -1,18 +1,9 @@
 #!/bin/bash
-
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-
-INVENTORY_FILE="$PROJECT_ROOT/inventory.ini"
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-
 set -euo pipefail
 
+
+
+source "$(dirname "$0")/env.conf"
 
 # echo -e "${BLUE}Baseline:  variables configuration pre deployment...${NC}"
 # ./var-config.sh
@@ -76,18 +67,18 @@ echo "Fetching Azure outputs..."
 
 LIN_VM_IP=$(az vm list-ip-addresses \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --name "vm-99999990" \
+  --name "vm-9r5-1n4-77" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 
 LIN_VM_NAME=$(az vm list \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" \
   -o tsv)
 
 SQL_SERVER_NAME=$(az sql server list \
   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" \
   -o tsv)
   
 
@@ -105,10 +96,10 @@ ANSIBLE_CONFIG=$PROJECT_ROOT/ansible.cfg ansible-playbook \
   -i $INVENTORY_FILE \
   --extra-vars "sql_server_name=$SQL_SERVER_NAME \
   database_name=$DATABASE_NAME \
-  worker_count=6 \
-  max_batches=25 \
-  min_batch_size=500 \
-  max_batch_size=3000 \
-  batch_delay_ms=100"
+  worker_count=140 \
+  max_batches=250 \
+  min_batch_size=2000 \
+  max_batch_size=10000 \
+  batch_delay_ms=0"
 
 echo -e "${GREEN}DEPLOYMENT PIPELINE COMPLETED${NC}"

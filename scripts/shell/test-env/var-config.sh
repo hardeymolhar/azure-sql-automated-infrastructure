@@ -1,26 +1,21 @@
+
 #!/bin/bash
 # =========================================================
 # COLORS
 # =========================================================
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 set -euo pipefail
+source "$(dirname "$0")/env.conf"
+
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 
-NEW_ID="prd-ind-01"
+NEW_ID="$RESOURCE_SUFFIX"
 
-PROJECT_DIR="/Users/mac/Projects/azure-sql-automated-infrastructure"
+TARGET_DIR="$PROJECT_ROOT/scripts/shell/test-env"
 
-TARGET_DIR="$PROJECT_DIR/scripts/shell/test-env"
-
-BACKUP_DIR="$PROJECT_DIR/.backups"
+BACKUP_DIR="$PROJECT_ROOT/.backups"
 
 # =========================================================
 # VALIDATION
@@ -78,13 +73,12 @@ find "$TARGET_DIR" \
     # =========================================================
     # REPLACE INFRASTRUCTURE RESOURCE SUFFIXES
     # Example:
-    # vm-99999999 -> vm-prd-ind-01
-    # kv-99999999 -> kv-prd-ind-01
-    # sql-des-99999999 -> sql-des-prd-ind-01
+    # vm-9r5-1n4-77 -> vm-9r5-1n4-77
+    # kv-9r5-1n4-77 -> kv-9r5-1n4-77
+    # sql-des-9r5-1n4-77 -> sql-des-9r5-1n4-77
     # =========================================================
 
-    perl -pi -e 's/\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-disk|log-disk|temp-disk|backup-disk)-[a-zA-Z0-9-]+\b/$1-'"$NEW_ID"'/g' "$file"
-
+perl -pi -e "s/([\"'=:\x20])(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|data-dsk|log-dsk|temp-dsk|backup-dsk)-[a-zA-Z0-9-]+/\1\2-$NEW_ID/g" "$file"
   fi
 
 done
@@ -98,7 +92,7 @@ echo -e "${GREEN}Replacement complete.${NC}"
 echo -e "${BLUE}=========================================================${NC}"
 
 echo -e "${YELLOW}Modified files:${NC}"
-grep -RE '\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-disk|log-disk|temp-disk|backup-disk)-[0-9a-zA-Z-]+\b' "$TARGET_DIR" || true
+grep -RE '\b(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|disk|data-dsk|log-disk|temp-disk|backup-disk)-[0-9a-zA-Z-]+\b' "$TARGET_DIR" || true
 
 echo -e "${BLUE}=========================================================${NC}"
 echo -e "${GREEN}Backup files stored in:${NC}"

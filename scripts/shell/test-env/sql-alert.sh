@@ -1,12 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+source "$(dirname "$0")/env.conf"
 # =========================================================
 # HELPER FUNCTIONS
 # =========================================================
@@ -25,13 +20,7 @@ resource_exists() {
 # INPUT VARIABLES
 # =========================================================
 
-RESOURCE_GROUP=$(az group list --query "[1].name" -o tsv)
-SQL_SERVER_NAME=$(az sql server list \
-  --resource-group "$RESOURCE_GROUP" \
-  --query "[?contains(name, '-99999990')].name | [0]" \
-  -o tsv)
-DATABASE_NAME="demo-db"
-ALERT_EMAIL="hardeymolhar@gmail.com"
+
 
 # =========================================================
 # RESOURCE IDS
@@ -48,7 +37,6 @@ DATABASE_ID=$(az sql db show \
 # CREATE ACTION GROUP
 # =========================================================
 
-ACTION_GROUP_NAME="sql-workload-action-group"
 
 if resource_exists "az monitor action-group show --name $ACTION_GROUP_NAME --resource-group $RESOURCE_GROUP"; then
   echo -e "${GREEN}Action Group already exists. Skipping creation...${NC}"
@@ -72,15 +60,14 @@ ACTION_GROUP_ID=$(az monitor action-group show \
 # DTU PERCENTAGE ALERT
 # =========================================================
 
-ALERT_NAME="sql-dtu-percentage-alert"
 
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $DTU_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $DTU_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${YELLOW}Creating DTU Percentage alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$DTU_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL DTU utilization exceeded 80 percent" \
@@ -95,15 +82,14 @@ fi
 # LOG IO PERCENTAGE ALERT
 # =========================================================
 
-ALERT_NAME="sql-logio-percentage-alert"
 
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $LOG_IO_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $LOG_IO_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${YELLOW}Creating Log IO Percentage alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$LOG_IO_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL Log IO utilization exceeded 85 percent" \
@@ -118,15 +104,15 @@ fi
 # CPU PERCENTAGE ALERT
 # =========================================================
 
-ALERT_NAME="sql-cpu-percentage-alert"
+SQL_CPU_ALERT_NAME="sql-cpu-percentage-alert"
 
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $SQL_CPU_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $SQL_CPU_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${BLUE}Creating CPU Percentage alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$SQL_CPU_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL CPU utilization exceeded 75 percent" \
@@ -141,15 +127,14 @@ fi
 # WORKERS PERCENTAGE ALERT
 # =========================================================
 
-ALERT_NAME="sql-workers-percentage-alert"
 
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $SQL_WORKERS_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $SQL_WORKERS_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${YELLOW}Creating Workers Percentage alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$SQL_WORKERS_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL worker utilization exceeded 80 percent" \
@@ -164,15 +149,14 @@ fi
 # DEADLOCK ALERT
 # =========================================================
 
-ALERT_NAME="sql-deadlock-alert"
 
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $DEADLOCK_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $DEADLOCK_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${YELLOW}Creating Deadlock alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$DEADLOCK_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL deadlock detected" \
@@ -187,15 +171,13 @@ fi
 # SESSIONS PERCENTAGE ALERT
 # =========================================================
 
-ALERT_NAME="sql-sessions-percentage-alert"
-
-if resource_exists "az monitor metrics alert show --name $ALERT_NAME --resource-group $RESOURCE_GROUP"; then
-  echo -e "${GREEN}Alert $ALERT_NAME already exists. Skipping creation...${NC}"
+if resource_exists "az monitor metrics alert show --name $SQL_SESSIONS_ALERT_NAME --resource-group $RESOURCE_GROUP"; then
+  echo -e "${GREEN}Alert $SQL_SESSIONS_ALERT_NAME already exists. Skipping creation...${NC}"
 else
   echo -e "${YELLOW}Creating Sessions Percentage alert...${NC}"
 
   az monitor metrics alert create \
-    --name "$ALERT_NAME" \
+    --name "$SQL_SESSIONS_ALERT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --scopes "$DATABASE_ID" \
     --description "Azure SQL session utilization exceeded 70 percent" \

@@ -1,3 +1,11 @@
+$RESOURCE_SUFFIX = "9r5-1n4-77"
+
+$sqlServerName="sqlserver-$RESOURCE_SUFFIX"
+
+$resourceGroup = az group list `
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" `
+  -o tsv
+  
 # =========================================================
 # REQUIRED MODULES
 # =========================================================
@@ -17,7 +25,7 @@ Add-Type -AssemblyName "Microsoft.SqlServer.ConnectionInfo"
 
 $sqlServerName = (az sql server list `
   --resource-group "$RESOURCE_GROUP" `
-  --query "[?contains(name, '-99999990')].name | [0]" `
+  --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" `
   -o tsv)
 
 
