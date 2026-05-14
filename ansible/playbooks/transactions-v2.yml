@@ -27,142 +27,142 @@
 
   tasks:
 
-    # =========================================================
-    # CREATE REMOTE DIRECTORY
-    # =========================================================
-
-    - name: Create remote scripts directory
-      ansible.builtin.file:
-        path: "{{ remote_scripts_dir }}"
-        state: directory
-        owner: sqladmin
-        group: sqladmin
-        mode: '0755'
-
-    - name: Create remote .NET cache directory
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: sqladmin
-        group: sqladmin
-        mode: '0755'
-      loop:
-        - "{{ remote_cache_dir }}"
-        - "{{ remote_cache_dir }}/dotnet-cli"
-        - "{{ remote_cache_dir }}/nuget"
-        - "{{ remote_cache_dir }}/nuget/packages"
-        - "{{ remote_cache_dir }}/nuget/http-cache"
-        - "{{ remote_cache_dir }}/nuget/scratch"
-        - "{{ remote_cache_dir }}/tmp"
-
-    # =========================================================
-    # CREATE MANAGED IDENTITY DIRECTORY
-    # =========================================================
-
-    - name: Create managed identity project directory
-      ansible.builtin.file:
-        path: "{{ remote_scripts_dir }}/managed-identity-connection"
-        state: directory
-        owner: sqladmin
-        group: sqladmin
-        mode: '0755'
-
-    # =========================================================
-    # CREATE BATCH INSERT DIRECTORY
-    # =========================================================
-
-    - name: Create batch inserts project directory
-      ansible.builtin.file:
-        path: "{{ remote_scripts_dir }}/batch-inserts"
-        state: directory
-        owner: sqladmin
-        group: sqladmin
-        mode: '0755'
-
     # # =========================================================
-    # # CREATE CONCURRENCY DIRECTORY
+    # # CREATE REMOTE DIRECTORY
     # # =========================================================
 
-    # - name: Create concurrency project directory
+    # - name: Create remote scripts directory
     #   ansible.builtin.file:
-    #     path: "{{ remote_scripts_dir }}/concurrency"
+    #     path: "{{ remote_scripts_dir }}"
     #     state: directory
     #     owner: sqladmin
     #     group: sqladmin
     #     mode: '0755'
 
-
-    # =========================================================
-    # CREATE CONCURRENCY V2 DIRECTORY
-    # =========================================================
-
-    - name: Create concurrency project directory
-      ansible.builtin.file:
-        path: "{{ remote_scripts_dir }}/concurrent-stress"
-        state: directory
-        owner: sqladmin
-        group: sqladmin
-        mode: '0755'
-
-    # =========================================================
-    # UPLOAD MANAGED IDENTITY FILES
-    # =========================================================
-
-    - name: Upload managed identity Program.cs
-      ansible.builtin.copy:
-        src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/Program.cs"
-        dest: "{{ remote_scripts_dir }}/managed-identity-connection/Program.cs"
-        owner: sqladmin
-        group: sqladmin
-        mode: '0644'
-
-    - name: Upload managed identity csproj
-      ansible.builtin.copy:
-        src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
-        dest: "{{ remote_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
-        owner: sqladmin
-        group: sqladmin
-        mode: '0644'
-
-    # =========================================================
-    # UPLOAD BATCH INSERT FILES
-    # =========================================================
-
-    - name: Upload batch insert Program.cs
-      ansible.builtin.copy:
-        src: "{{ local_dotnet_scripts_dir }}/batch-inserts/Program.cs"
-        dest: "{{ remote_scripts_dir }}/batch-inserts/Program.cs"
-        owner: sqladmin
-        group: sqladmin
-        mode: '0644'
-
-    - name: Upload batch insert csproj
-      ansible.builtin.copy:
-        src: "{{ local_dotnet_scripts_dir }}/batch-inserts/batch-inserts.csproj"
-        dest: "{{ remote_scripts_dir }}/batch-inserts/batch-inserts.csproj"
-        owner: sqladmin
-        group: sqladmin
-        mode: '0644'
+    # - name: Create remote .NET cache directory
+    #   ansible.builtin.file:
+    #     path: "{{ item }}"
+    #     state: directory
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0755'
+    #   loop:
+    #     - "{{ remote_cache_dir }}"
+    #     - "{{ remote_cache_dir }}/dotnet-cli"
+    #     - "{{ remote_cache_dir }}/nuget"
+    #     - "{{ remote_cache_dir }}/nuget/packages"
+    #     - "{{ remote_cache_dir }}/nuget/http-cache"
+    #     - "{{ remote_cache_dir }}/nuget/scratch"
+    #     - "{{ remote_cache_dir }}/tmp"
 
     # # =========================================================
-    # # UPLOAD CONCURRENCY FILES
+    # # CREATE MANAGED IDENTITY DIRECTORY
     # # =========================================================
 
-    # - name: Upload concurrency Program.cs
+    # - name: Create managed identity project directory
+    #   ansible.builtin.file:
+    #     path: "{{ remote_scripts_dir }}/managed-identity-connection"
+    #     state: directory
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0755'
+
+    # # =========================================================
+    # # CREATE BATCH INSERT DIRECTORY
+    # # =========================================================
+
+    # - name: Create batch inserts project directory
+    #   ansible.builtin.file:
+    #     path: "{{ remote_scripts_dir }}/batch-inserts"
+    #     state: directory
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0755'
+
+    # # # =========================================================
+    # # # CREATE CONCURRENCY DIRECTORY
+    # # # =========================================================
+
+    # # - name: Create concurrency project directory
+    # #   ansible.builtin.file:
+    # #     path: "{{ remote_scripts_dir }}/concurrency"
+    # #     state: directory
+    # #     owner: sqladmin
+    # #     group: sqladmin
+    # #     mode: '0755'
+
+
+    # # =========================================================
+    # # CREATE CONCURRENCY V2 DIRECTORY
+    # # =========================================================
+
+    # - name: Create concurrency project directory
+    #   ansible.builtin.file:
+    #     path: "{{ remote_scripts_dir }}/concurrent-stress"
+    #     state: directory
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0755'
+
+    # # =========================================================
+    # # UPLOAD MANAGED IDENTITY FILES
+    # # =========================================================
+
+    # - name: Upload managed identity Program.cs
     #   ansible.builtin.copy:
-    #     src: "{{ local_dotnet_scripts_dir }}/concurrency/concurrency.cs"
-    #     dest: "{{ remote_scripts_dir }}/concurrency/Program.cs"
+    #     src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/Program.cs"
+    #     dest: "{{ remote_scripts_dir }}/managed-identity-connection/Program.cs"
     #     owner: sqladmin
     #     group: sqladmin
     #     mode: '0644'
 
-    # - name: Upload concurrency csproj
+    # - name: Upload managed identity csproj
     #   ansible.builtin.copy:
-    #     src: "{{ local_dotnet_scripts_dir }}/concurrency/batch-insert.csproj"
-    #     dest: "{{ remote_scripts_dir }}/concurrency/concurrency.csproj"
+    #     src: "{{ local_dotnet_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
+    #     dest: "{{ remote_scripts_dir }}/managed-identity-connection/managed-identity-connection.csproj"
     #     owner: sqladmin
     #     group: sqladmin
     #     mode: '0644'
+
+    # # =========================================================
+    # # UPLOAD BATCH INSERT FILES
+    # # =========================================================
+
+    # - name: Upload batch insert Program.cs
+    #   ansible.builtin.copy:
+    #     src: "{{ local_dotnet_scripts_dir }}/batch-inserts/Program.cs"
+    #     dest: "{{ remote_scripts_dir }}/batch-inserts/Program.cs"
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0644'
+
+    # - name: Upload batch insert csproj
+    #   ansible.builtin.copy:
+    #     src: "{{ local_dotnet_scripts_dir }}/batch-inserts/batch-inserts.csproj"
+    #     dest: "{{ remote_scripts_dir }}/batch-inserts/batch-inserts.csproj"
+    #     owner: sqladmin
+    #     group: sqladmin
+    #     mode: '0644'
+
+    # # # =========================================================
+    # # # UPLOAD CONCURRENCY FILES
+    # # # =========================================================
+
+    # # - name: Upload concurrency Program.cs
+    # #   ansible.builtin.copy:
+    # #     src: "{{ local_dotnet_scripts_dir }}/concurrency/concurrency.cs"
+    # #     dest: "{{ remote_scripts_dir }}/concurrency/Program.cs"
+    # #     owner: sqladmin
+    # #     group: sqladmin
+    # #     mode: '0644'
+
+    # # - name: Upload concurrency csproj
+    # #   ansible.builtin.copy:
+    # #     src: "{{ local_dotnet_scripts_dir }}/concurrency/batch-insert.csproj"
+    # #     dest: "{{ remote_scripts_dir }}/concurrency/concurrency.csproj"
+    # #     owner: sqladmin
+    # #     group: sqladmin
+    # #     mode: '0644'
 
     # =========================================================
     # UPLOAD CONCURRENCY FILES v2
@@ -192,6 +192,7 @@
     - name: Run managed identity connection workload
       ansible.builtin.shell:
         cmd: |
+          source ~/.bashrc
           rm -rf bin obj
           dotnet restore --force --no-cache
           dotnet build
@@ -218,6 +219,7 @@
 
     - name: Run concurrency workload
       ansible.builtin.shell: |
+        source ~/.bashrc
         rm -rf bin obj
 
         dotnet nuget locals all --clear

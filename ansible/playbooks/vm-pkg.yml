@@ -130,23 +130,46 @@
       args:
         creates: /home/sqladmin/.dotnet/dotnet
 
+    # # =========================================================
+    # # CONFIGURE .NET ENVIRONMENT
+    # # =========================================================
+
+    # - name: Configure DOTNET_ROOT
+    #   ansible.builtin.lineinfile:
+    #     path: /home/sqladmin/.bashrc
+    #     line: 'export DOTNET_ROOT="$HOME/.dotnet"'
+    #     state: present
+    #     create: true
+
+    # - name: Configure .NET PATH
+    #   ansible.builtin.lineinfile:
+    #     path: /home/sqladmin/.bashrc
+    #     line: 'export PATH="$PATH:$HOME/.dotnet"'
+    #     state: present
+    #     create: true
+
     # =========================================================
-    # CONFIGURE .NET ENVIRONMENT
+    # GLOBAL ENVIRONMENT CONFIGURATION
     # =========================================================
 
-    - name: Configure DOTNET_ROOT
-      ansible.builtin.lineinfile:
-        path: /home/sqladmin/.bashrc
-        line: 'export DOTNET_ROOT="$HOME/.dotnet"'
-        state: present
-        create: true
+    - name: Configure global dotnet and sqlcmd paths
+      ansible.builtin.copy:
+      dest: /etc/profile.d/custom-paths.sh
+      content: |
+        export DOTNET_ROOT="/home/sqladmin/.dotnet"
+        export PATH="$PATH:/home/sqladmin/.dotnet:/opt/mssql-tools18/bin"
+      owner: root
+      group: root
+      mode: '0644'
 
-    - name: Configure .NET PATH
-      ansible.builtin.lineinfile:
-        path: /home/sqladmin/.bashrc
-        line: 'export PATH="$PATH:$HOME/.dotnet"'
-        state: present
-        create: true
+    - name: Reload global profile
+      shell: |
+        source /etc/profile.d/custom-paths.sh
+        dotnet --info
+        sqlcmd -?
+      args:
+        executable: /bin/bash
+      become_user: sqladmin
 
     # =========================================================
     # VERIFY .NET INSTALLATION
