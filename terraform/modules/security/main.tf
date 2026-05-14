@@ -37,8 +37,8 @@ resource "time_sleep" "wait_for_identity" {
 
 resource "azurerm_key_vault" "kv" {
   name                = "kv-${random_string.suffix.result}"
-  location            = local.primary_location
-  resource_group_name = local.primary_rg
+  location            = var.primary_location
+  resource_group_name = var.primary_rg
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
@@ -49,7 +49,7 @@ resource "azurerm_key_vault" "kv" {
   network_acls {
     default_action = "Allow"
 
-    ip_rules = ["${local.client_ip}"]
+    ip_rules = [var.client_ip]
     bypass   = "AzureServices"
   }
 

@@ -3,16 +3,40 @@ variable "subscription_id" {
   type        = string
 }
 
+
+
+variable "rg" {
+  type        = list(string)
+  description = "Resource group name"
+}
+
+
+
+variable "location" {
+  type        = list(string)
+  description = "Azure region for resource deployment"
+}
+
+
 variable "admin_username" {
   description = "VM Admin username"
   type        = string
   default     = "azureuser"
 }
 
+
+variable "sqladmin_username" {
+  description = "SQL Admin username"
+  type        = string
+  default     = "sqladmin"
+}
+
+
 variable "data_disks_per_linux_vm" {
   type    = number
   default = 2
 }
+
 
 variable "log_disks_per_linux_vm" {
   type    = number
@@ -20,12 +44,13 @@ variable "log_disks_per_linux_vm" {
 }
 
 variable "admin_password" {
-  description = "VM Admin username"
+  description = "VM Admin password"
   type        = string
 }
-variable "rg" {
-  type        = list(string)
-  description = "Resource group name"
+
+variable "sqladmin_password" {
+  description = "SQL Admin password"
+  type        = string
 }
 
 variable "linux_vm_count" {
@@ -54,10 +79,6 @@ variable "image_publisher" {
   default = "RedHat"
 }
 
-variable "location" {
-  type        = list(string)
-  description = "Azure region for resource deployment"
-}
 
 variable "image_offer" {
   type    = string

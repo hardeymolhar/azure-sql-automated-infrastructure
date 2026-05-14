@@ -15,14 +15,14 @@ resource "random_string" "suffix" {
 # This is the source of truth before failover.
 resource "azurerm_mssql_server" "sql" {
   name                = "sql-automated-server-${random_string.suffix.result}"
-  resource_group_name = local.primary_rg
-  location            = local.primary_location
+  resource_group_name = var.primary_rg
+  location            = var.primary_location
   version             = "12.0"
 
   # Admin credentials must match secondary server
   # for failover group pairing to succeed.
-  administrator_login          = var.admin_username
-  administrator_login_password = var.admin_password
+  administrator_login          = var.sqladmin_username
+  administrator_login_password = var.sqladmin_password
 
   minimum_tls_version = "1.2"
 
@@ -45,14 +45,14 @@ resource "azurerm_mssql_server" "sql" {
 resource "azurerm_mssql_server" "sql_secondary" {
 
   name                = "whizlabserver-replica-${random_string.suffix.result}"
-  resource_group_name = local.primary_rg
-  location            = local.secondary_location
+  resource_group_name = var.primary_rg
+  location            = var.secondary_location
   version             = "12.0"
 
   # MUST match primary server credentials
 
-  administrator_login          = var.admin_username
-  administrator_login_password = var.admin_password
+  administrator_login          = var.sqladmin_username
+  administrator_login_password = var.sqladmin_password
   minimum_tls_version          = "1.2"
 
   identity {
@@ -231,8 +231,8 @@ resource "azurerm_mssql_failover_group" "fog" {
 resource "azurerm_mssql_firewall_rule" "sql_allow_client" {
   name             = "AllowClientIP"
   server_id        = azurerm_mssql_server.sql.id
-  start_ip_address = local.client_ip
-  end_ip_address   = local.client_ip
+  start_ip_address = var.client_ip
+  end_ip_address   = var.client_ip
 }
 
 ############################################
@@ -243,7 +243,8 @@ resource "azurerm_mssql_firewall_rule" "sql_allow_client" {
 resource "azurerm_mssql_firewall_rule" "sql_allow_client_secondary" {
   name             = "AllowClientIP"
   server_id        = azurerm_mssql_server.sql_secondary.id
-  start_ip_address = local.client_ip
-  end_ip_address   = local.client_ip
+  start_ip_address = var.client_ip
+  end_ip_address   = var.client_ip
 }
+
 

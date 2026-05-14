@@ -6,8 +6,8 @@
 
 resource "azurerm_private_endpoint" "dbvk_pe" {
   name                = "pev-prod-vault"
-  resource_group_name = local.primary_rg
-  location            = local.primary_location
+  resource_group_name = var.primary_rg
+  location            = var.primary_location
   subnet_id           = azurerm_subnet.subnet["dev-vnet-pe-subnet"].id
 
   private_service_connection {
@@ -39,8 +39,8 @@ resource "azurerm_private_endpoint" "dbvk_pe" {
 
 resource "azurerm_private_endpoint" "azuresql_pe" {
   name                = "pev-prod-sql"
-  resource_group_name = local.primary_rg
-  location            = local.primary_location
+  resource_group_name = var.primary_rg
+  location            = var.primary_location
   subnet_id           = azurerm_subnet.subnet["dev-vnet-pe-subnet"].id
 
   private_service_connection {
