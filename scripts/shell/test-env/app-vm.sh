@@ -47,8 +47,22 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
     --name "$VNET_NAME" \
-    --subnet-name "$SUBNET_NAME"
+    --subnet-name "$SUBNET_NAME" \
+    --subnet-prefixes 10.10.1.0/24
 fi
+
+
+# =========================================================
+# ENABLE SERVICE ENDPOINTS
+# =========================================================
+
+echo -e "${BLUE}Configuring subnet service endpoints...${NC}"
+
+az network vnet subnet update \
+  --resource-group "$RESOURCE_GROUP" \
+  --vnet-name "$VNET_NAME" \
+  --name "$SUBNET_NAME" \
+  --service-endpoints Microsoft.Storage Microsoft.KeyVault Microsoft.Sql
 
 # =========================================================
 # CREATE NSG
