@@ -240,7 +240,8 @@ WHERE
                         new SqlCommand(
                             insertSql,
                             conn,
-                            transaction
+                            transaction,
+                            SqlCommandColumnEncryptionSetting.Enabled
                         );
 
                     DateTime now =
@@ -326,6 +327,7 @@ WHERE
                             20
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = random.NextInt64(
                                 1000000000,
                                 9999999999
@@ -339,6 +341,7 @@ WHERE
                             20
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = random.NextInt64(
                                 1000000000,
                                 9999999999
@@ -352,6 +355,7 @@ WHERE
                             150
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = "John Doe"
                         });
 
@@ -450,6 +454,7 @@ WHERE
                             255
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = Guid.NewGuid().ToString()
                         });
 
@@ -460,6 +465,7 @@ WHERE
                             50
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = random.Next(
                                 1000,
                                 9999
@@ -473,6 +479,7 @@ WHERE
                             100
                         )
                         {
+                            ForceColumnEncryption = true,
                             Value = random.NextInt64(
                                 100000000000,
                                 999999999999

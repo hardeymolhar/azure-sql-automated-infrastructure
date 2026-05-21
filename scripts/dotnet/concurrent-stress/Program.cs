@@ -39,6 +39,21 @@ class Program
         "mary"
     };
 
+    private static readonly HashSet<int> RetryableErrors =
+        new()
+        {
+            1205,
+            40197,
+            40501,
+            40613,
+            49918,
+            49919,
+            49920,
+            10928,
+            10929,
+            11001
+        };
+
     private static readonly ConcurrentDictionary<string, int> Metrics =
         new ConcurrentDictionary<string, int>();
 
@@ -59,7 +74,31 @@ class Program
                 out int parsedWorkerCount
             )
                 ? parsedWorkerCount
+                : 40;
+
+        int reportingWorkerCount =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("REPORTING_WORKERS"),
+                out int parsedReportingWorkerCount
+            )
+                ? parsedReportingWorkerCount
+                : 12;
+
+        int deadlockWorkerCount =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("DEADLOCK_WORKERS"),
+                out int parsedDeadlockWorkerCount
+            )
+                ? parsedDeadlockWorkerCount
                 : 6;
+
+        int sessionHolderCount =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("SESSION_HOLDER_COUNT"),
+                out int parsedSessionHolderCount
+            )
+                ? parsedSessionHolderCount
+                : 220;
 
         int maxBatches =
             int.TryParse(
@@ -67,7 +106,7 @@ class Program
                 out int parsedMaxBatches
             )
                 ? parsedMaxBatches
-                : 25;
+                : 0;
 
         int minBatchSize =
             int.TryParse(
@@ -75,7 +114,7 @@ class Program
                 out int parsedMinBatchSize
             )
                 ? parsedMinBatchSize
-                : 500;
+                : 750;
 
         int maxBatchSize =
             int.TryParse(
@@ -83,7 +122,7 @@ class Program
                 out int parsedMaxBatchSize
             )
                 ? parsedMaxBatchSize
-                : 3000;
+                : 2500;
 
         int batchDelayMilliseconds =
             int.TryParse(
@@ -91,16 +130,32 @@ class Program
                 out int parsedBatchDelayMilliseconds
             )
                 ? parsedBatchDelayMilliseconds
-                : 100;
+                : 0;
+
+        int workloadDurationMinutes =
+            int.TryParse(
+                Environment.GetEnvironmentVariable("WORKLOAD_DURATION_MINUTES"),
+                out int parsedWorkloadDurationMinutes
+            )
+                ? parsedWorkloadDurationMinutes
+                : 30;
 
         Console.WriteLine("================================================");
         Console.WriteLine("AZURE SQL CONCURRENT STRESS WORKLOAD");
         Console.WriteLine("================================================");
         Console.WriteLine($"Workers           : {workerCount}");
-        Console.WriteLine($"Max Batches       : {maxBatches}");
+        Console.WriteLine($"Reporting Workers : {reportingWorkerCount}");
+        Console.WriteLine($"Deadlock Workers  : {deadlockWorkerCount}");
+        Console.WriteLine($"Session Holders   : {sessionHolderCount}");
+        Console.WriteLine(
+            maxBatches > 0
+                ? $"Max Batches       : {maxBatches}"
+                : "Max Batches       : duration limited"
+        );
         Console.WriteLine($"Min Batch Size    : {minBatchSize}");
         Console.WriteLine($"Max Batch Size    : {maxBatchSize}");
         Console.WriteLine($"Batch Delay (ms)  : {batchDelayMilliseconds}");
+        Console.WriteLine($"Duration (min)    : {workloadDurationMinutes}");
         Console.WriteLine("================================================");
 
         var credential =
@@ -140,9 +195,19 @@ class Program
             $"Column Encryption Setting=Enabled;" +
             $"Connection Timeout=30;" +
             $"Pooling=true;" +
-            $"Max Pool Size=200;" +
-            $"Min Pool Size=20;" +
+            $"Max Pool Size=400;" +
+            $"Min Pool Size=50;" +
             $"MultipleActiveResultSets=False;";
+
+        using CancellationTokenSource cancellation =
+            new(
+                TimeSpan.FromMinutes(
+                    workloadDurationMinutes
+                )
+            );
+
+        CancellationToken cancellationToken =
+            cancellation.Token;
 
         List<Task> tasks = new();
 
@@ -158,19 +223,55 @@ class Program
                     maxBatches,
                     minBatchSize,
                     maxBatchSize,
-                    batchDelayMilliseconds
+                    batchDelayMilliseconds,
+                    cancellationToken
                 )
             );
         }
 
-        tasks.Add(
-            RunReportingWorker(
-                connectionString,
-                token.Token
-            )
-        );
+        for (int workerId = 1; workerId <= reportingWorkerCount; workerId++)
+        {
+            tasks.Add(
+                RunReportingWorker(
+                    workerId,
+                    connectionString,
+                    token.Token,
+                    cancellationToken
+                )
+            );
+        }
 
-        await Task.WhenAll(tasks);
+        for (int workerId = 1; workerId <= deadlockWorkerCount; workerId++)
+        {
+            tasks.Add(
+                RunDeadlockWorker(
+                    workerId,
+                    connectionString,
+                    token.Token,
+                    cancellationToken
+                )
+            );
+        }
+
+        for (int workerId = 1; workerId <= sessionHolderCount; workerId++)
+        {
+            tasks.Add(
+                HoldSessionWorker(
+                    workerId,
+                    connectionString,
+                    token.Token,
+                    cancellationToken
+                )
+            );
+        }
+
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException)
+        {
+        }
 
         Console.WriteLine("================================================");
         Console.WriteLine("WORKLOAD COMPLETE");
@@ -189,20 +290,26 @@ class Program
         int maxBatches,
         int minBatchSize,
         int maxBatchSize,
-        int batchDelayMilliseconds
+        int batchDelayMilliseconds,
+        CancellationToken cancellationToken
     )
     {
         Random random =
             new Random(Guid.NewGuid().GetHashCode());
 
-        for (int batchNumber = 1; batchNumber <= maxBatches; batchNumber++)
+        for (
+            int batchNumber = 1;
+            !cancellationToken.IsCancellationRequested &&
+                (maxBatches <= 0 || batchNumber <= maxBatches);
+            batchNumber++
+        )
         {
             using SqlConnection conn =
                 new SqlConnection(connectionString);
 
             conn.AccessToken = accessToken;
 
-            await conn.OpenAsync();
+            await conn.OpenAsync(cancellationToken);
 
             int batchSize =
                 random.Next(minBatchSize, maxBatchSize + 1);
@@ -228,7 +335,7 @@ class Program
                             random
                         );
 
-                    await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync(cancellationToken);
 
                     Metrics.AddOrUpdate(
                         "Inserted Rows",
@@ -239,7 +346,8 @@ class Program
                     if (row % 250 == 0)
                     {
                         await Task.Delay(
-                            random.Next(5, 25)
+                            random.Next(5, 25),
+                            cancellationToken
                         );
                     }
                 }
@@ -252,7 +360,7 @@ class Program
                     );
 
                 int updatedRows =
-                    await updateCmd.ExecuteNonQueryAsync();
+                    await updateCmd.ExecuteNonQueryAsync(cancellationToken);
 
                 Metrics.AddOrUpdate(
                     "Updated Rows",
@@ -272,7 +380,7 @@ class Program
                     );
 
                 int deletedRows =
-                    await deleteCmd.ExecuteNonQueryAsync();
+                    await deleteCmd.ExecuteNonQueryAsync(cancellationToken);
 
                 Metrics.AddOrUpdate(
                     "Deleted Rows",
@@ -285,10 +393,11 @@ class Program
                 );
 
                 await Task.Delay(
-                    random.Next(500, 3000)
+                    random.Next(1500, 5000),
+                    cancellationToken
                 );
 
-                await transaction.CommitAsync();
+                await transaction.CommitAsync(cancellationToken);
 
                 Console.WriteLine(
                     $"[Worker {workerId}] Committed batch {batchNumber}"
@@ -302,7 +411,7 @@ class Program
 
                 try
                 {
-                    await transaction.RollbackAsync();
+                    await transaction.RollbackAsync(cancellationToken);
                 }
                 catch
                 {
@@ -311,17 +420,22 @@ class Program
 
             if (batchDelayMilliseconds > 0)
             {
-                await Task.Delay(batchDelayMilliseconds);
+                await Task.Delay(
+                    batchDelayMilliseconds,
+                    cancellationToken
+                );
             }
         }
     }
 
     private static async Task RunReportingWorker(
+        int workerId,
         string connectionString,
-        string accessToken
+        string accessToken,
+        CancellationToken cancellationToken
     )
     {
-        while (true)
+        while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
@@ -334,7 +448,7 @@ class Program
 
                 string reportingSql =
                 @"
-                SELECT TOP (20)
+                SELECT TOP (50)
                     transaction_type,
                     transaction_final_status,
                     COUNT(*) AS total_transactions,
@@ -351,18 +465,21 @@ class Program
                 using SqlCommand reportCmd =
                     new SqlCommand(reportingSql, conn);
 
+                reportCmd.CommandTimeout =
+                    120;
+
                 using SqlDataReader reader =
-                    await reportCmd.ExecuteReaderAsync();
+                    await reportCmd.ExecuteReaderAsync(cancellationToken);
 
                 int rows = 0;
 
-                while (await reader.ReadAsync())
+                while (await reader.ReadAsync(cancellationToken))
                 {
                     rows++;
                 }
 
                 Console.WriteLine(
-                    $"[REPORTING] Completed reporting query with {rows} result rows"
+                    $"[REPORTING {workerId}] Completed reporting query with {rows} result rows"
                 );
 
                 Metrics.AddOrUpdate(
@@ -378,8 +495,192 @@ class Program
                 );
             }
 
-            await Task.Delay(2000);
+            await Task.Delay(
+                250,
+                cancellationToken
+            );
         }
+    }
+
+    private static async Task RunDeadlockWorker(
+        int workerId,
+        string connectionString,
+        string accessToken,
+        CancellationToken cancellationToken
+    )
+    {
+        bool reverseOrder =
+            workerId % 2 == 0;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                using SqlConnection conn =
+                    new SqlConnection(connectionString);
+
+                conn.AccessToken = accessToken;
+
+                await conn.OpenAsync(cancellationToken);
+
+                using SqlTransaction transaction =
+                    (SqlTransaction)await conn.BeginTransactionAsync(
+                        IsolationLevel.Serializable,
+                        cancellationToken
+                    );
+
+                try
+                {
+                    using SqlCommand cmd =
+                        BuildDeadlockCommand(
+                            conn,
+                            transaction,
+                            reverseOrder
+                        );
+
+                    cmd.CommandTimeout =
+                        30;
+
+                    await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                catch (SqlException ex)
+                    when (ex.Number == 1205)
+                {
+                    Metrics.AddOrUpdate(
+                        "Deadlocks",
+                        1,
+                        (_, existing) => existing + 1
+                    );
+
+                    Console.WriteLine(
+                        $"[DEADLOCK {workerId}] Deadlock victim generated."
+                    );
+                }
+                catch
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                    }
+                    catch
+                    {
+                    }
+
+                    throw;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(
+                    $"[DEADLOCK {workerId}] ERROR: {ex.Message}"
+                );
+            }
+
+            await Task.Delay(
+                100,
+                cancellationToken
+            );
+        }
+    }
+
+    private static async Task HoldSessionWorker(
+        int workerId,
+        string connectionString,
+        string accessToken,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            using SqlConnection conn =
+                new SqlConnection(connectionString);
+
+            conn.AccessToken =
+                accessToken;
+
+            await conn.OpenAsync(cancellationToken);
+
+            Metrics.AddOrUpdate(
+                "Held Sessions",
+                1,
+                (_, existing) => existing + 1
+            );
+
+            Console.WriteLine(
+                $"[SESSION {workerId}] Holding session open."
+            );
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                using SqlCommand cmd =
+                    new SqlCommand(
+                        "SELECT 1;",
+                        conn
+                    );
+
+                await cmd.ExecuteScalarAsync(cancellationToken);
+
+                await Task.Delay(
+                    30000,
+                    cancellationToken
+                );
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static SqlCommand BuildDeadlockCommand(
+        SqlConnection conn,
+        SqlTransaction transaction,
+        bool reverseOrder
+    )
+    {
+        string sql =
+            reverseOrder
+                ? @"
+                    EXEC sp_getapplock
+                        @Resource = 'azure-sql-stress-lock-b',
+                        @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction',
+                        @LockTimeout = 10000;
+
+                    WAITFOR DELAY '00:00:02';
+
+                    EXEC sp_getapplock
+                        @Resource = 'azure-sql-stress-lock-a',
+                        @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction',
+                        @LockTimeout = 10000;
+                "
+                : @"
+                    EXEC sp_getapplock
+                        @Resource = 'azure-sql-stress-lock-a',
+                        @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction',
+                        @LockTimeout = 10000;
+
+                    WAITFOR DELAY '00:00:02';
+
+                    EXEC sp_getapplock
+                        @Resource = 'azure-sql-stress-lock-b',
+                        @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction',
+                        @LockTimeout = 10000;
+                ";
+
+        return new SqlCommand(
+            sql,
+            conn,
+            transaction
+        );
     }
 
     private static SqlCommand BuildInsertCommand(
@@ -455,7 +756,12 @@ class Program
         ";
 
         SqlCommand cmd =
-            new SqlCommand(insertSql, conn, transaction);
+            new SqlCommand(
+                insertSql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
         DateTime now = DateTime.UtcNow;
 
@@ -473,34 +779,85 @@ class Program
         decimal fee =
             Math.Round(amount * 0.0075m, 2);
 
-        cmd.Parameters.AddWithValue("@transaction_sub_type", transactionType);
-        cmd.Parameters.AddWithValue("@transaction_type", transactionType);
-        cmd.Parameters.AddWithValue("@amount", amount);
-        cmd.Parameters.AddWithValue("@charged_fee", fee);
-        cmd.Parameters.AddWithValue("@currency_code", "NGN");
-        cmd.Parameters.AddWithValue("@source_account_number", random.NextInt64(1000000000, 9999999999).ToString());
-        cmd.Parameters.AddWithValue("@destination_account_number", random.NextInt64(1000000000, 9999999999).ToString());
-        cmd.Parameters.AddWithValue("@destination_account_name", "John Doe");
-        cmd.Parameters.AddWithValue("@destination_bank_code", "044");
-        cmd.Parameters.AddWithValue("@destination_bank_name", "Access Bank");
-        cmd.Parameters.AddWithValue("@transaction_reference", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("@transaction_external_reference", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("@transaction_posting_reference", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("@request_transaction_id", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("@transaction_final_status", Statuses[random.Next(Statuses.Length)]);
-        cmd.Parameters.AddWithValue("@transaction_request_status", Statuses[random.Next(Statuses.Length)]);
-        cmd.Parameters.AddWithValue("@session_key", Guid.NewGuid().ToString());
-        cmd.Parameters.AddWithValue("@recharge_pin", random.Next(1000, 9999).ToString());
-        cmd.Parameters.AddWithValue("@electricity_token", random.NextInt64(100000000000, 999999999999).ToString());
-        cmd.Parameters.AddWithValue("@user_name", Users[random.Next(Users.Length)]);
-        cmd.Parameters.AddWithValue("@created_by", "concurrency-worker");
-        cmd.Parameters.AddWithValue("@modified_by", "concurrency-worker");
-        cmd.Parameters.AddWithValue("@created_on", now);
-        cmd.Parameters.AddWithValue("@modified_on", now);
-        cmd.Parameters.AddWithValue("@transaction_request_date", now);
-        cmd.Parameters.AddWithValue("@transaction_response_date", now);
-        cmd.Parameters.AddWithValue("@reversed", false);
-        cmd.Parameters.AddWithValue("@vat_inclusive", true);
+        cmd.Parameters.Add("@transaction_sub_type", SqlDbType.NVarChar, 31).Value = transactionType;
+        cmd.Parameters.Add("@transaction_type", SqlDbType.NVarChar, 50).Value = transactionType;
+
+        SqlParameter amountParameter =
+            cmd.Parameters.Add("@amount", SqlDbType.Decimal);
+
+        amountParameter.Precision = 19;
+        amountParameter.Scale = 2;
+        amountParameter.Value = amount;
+
+        SqlParameter feeParameter =
+            cmd.Parameters.Add("@charged_fee", SqlDbType.Decimal);
+
+        feeParameter.Precision = 19;
+        feeParameter.Scale = 2;
+        feeParameter.Value = fee;
+
+        cmd.Parameters.Add("@currency_code", SqlDbType.Char, 3).Value = "NGN";
+
+        cmd.Parameters.Add(
+            new SqlParameter("@source_account_number", SqlDbType.NVarChar, 20)
+            {
+                ForceColumnEncryption = true,
+                Value = random.NextInt64(1000000000, 9999999999).ToString()
+            });
+
+        cmd.Parameters.Add(
+            new SqlParameter("@destination_account_number", SqlDbType.NVarChar, 20)
+            {
+                ForceColumnEncryption = true,
+                Value = random.NextInt64(1000000000, 9999999999).ToString()
+            });
+
+        cmd.Parameters.Add(
+            new SqlParameter("@destination_account_name", SqlDbType.NVarChar, 150)
+            {
+                ForceColumnEncryption = true,
+                Value = "John Doe"
+            });
+
+        cmd.Parameters.Add("@destination_bank_code", SqlDbType.VarChar, 10).Value = "044";
+        cmd.Parameters.Add("@destination_bank_name", SqlDbType.NVarChar, 100).Value = "Access Bank";
+        cmd.Parameters.Add("@transaction_reference", SqlDbType.VarChar, 100).Value = Guid.NewGuid().ToString();
+        cmd.Parameters.Add("@transaction_external_reference", SqlDbType.VarChar, 100).Value = Guid.NewGuid().ToString();
+        cmd.Parameters.Add("@transaction_posting_reference", SqlDbType.VarChar, 100).Value = Guid.NewGuid().ToString();
+        cmd.Parameters.Add("@request_transaction_id", SqlDbType.VarChar, 100).Value = Guid.NewGuid().ToString();
+        cmd.Parameters.Add("@transaction_final_status", SqlDbType.VarChar, 50).Value = Statuses[random.Next(Statuses.Length)];
+        cmd.Parameters.Add("@transaction_request_status", SqlDbType.VarChar, 50).Value = Statuses[random.Next(Statuses.Length)];
+
+        cmd.Parameters.Add(
+            new SqlParameter("@session_key", SqlDbType.NVarChar, 255)
+            {
+                ForceColumnEncryption = true,
+                Value = Guid.NewGuid().ToString()
+            });
+
+        cmd.Parameters.Add(
+            new SqlParameter("@recharge_pin", SqlDbType.NVarChar, 50)
+            {
+                ForceColumnEncryption = true,
+                Value = random.Next(1000, 9999).ToString()
+            });
+
+        cmd.Parameters.Add(
+            new SqlParameter("@electricity_token", SqlDbType.NVarChar, 100)
+            {
+                ForceColumnEncryption = true,
+                Value = random.NextInt64(100000000000, 999999999999).ToString()
+            });
+
+        cmd.Parameters.Add("@user_name", SqlDbType.NVarChar, 50).Value = Users[random.Next(Users.Length)];
+        cmd.Parameters.Add("@created_by", SqlDbType.NVarChar, 100).Value = "concurrency-worker";
+        cmd.Parameters.Add("@modified_by", SqlDbType.NVarChar, 100).Value = "concurrency-worker";
+        cmd.Parameters.Add("@created_on", SqlDbType.DateTime2).Value = now;
+        cmd.Parameters.Add("@modified_on", SqlDbType.DateTime2).Value = now;
+        cmd.Parameters.Add("@transaction_request_date", SqlDbType.DateTime2).Value = now;
+        cmd.Parameters.Add("@transaction_response_date", SqlDbType.DateTime2).Value = now;
+        cmd.Parameters.Add("@reversed", SqlDbType.Bit).Value = false;
+        cmd.Parameters.Add("@vat_inclusive", SqlDbType.Bit).Value = true;
 
         return cmd;
     }
@@ -526,27 +883,32 @@ class Program
         ";
 
         SqlCommand cmd =
-            new SqlCommand(updateSql, conn, transaction);
+            new SqlCommand(
+                updateSql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
-        cmd.Parameters.AddWithValue(
-            "@update_limit",
-            random.Next(1000, 5000)
-        );
+        cmd.Parameters.Add("@update_limit", SqlDbType.Int).Value =
+            random.Next(1000, 5000);
 
-        cmd.Parameters.AddWithValue(
-            "@fee_increment",
-            random.Next(10, 100)
-        );
+        SqlParameter feeIncrementParameter =
+            cmd.Parameters.Add("@fee_increment", SqlDbType.Decimal);
 
-        cmd.Parameters.AddWithValue(
-            "@status",
-            Statuses[random.Next(Statuses.Length)]
-        );
+        feeIncrementParameter.Precision = 19;
+        feeIncrementParameter.Scale = 2;
+        feeIncrementParameter.Value = random.Next(10, 100);
 
-        cmd.Parameters.AddWithValue(
-            "@minimum_amount",
-            random.Next(5000, 100000)
-        );
+        cmd.Parameters.Add("@status", SqlDbType.VarChar, 50).Value =
+            Statuses[random.Next(Statuses.Length)];
+
+        SqlParameter minimumAmountParameter =
+            cmd.Parameters.Add("@minimum_amount", SqlDbType.Decimal);
+
+        minimumAmountParameter.Precision = 19;
+        minimumAmountParameter.Scale = 2;
+        minimumAmountParameter.Value = random.Next(5000, 100000);
 
         return cmd;
     }
@@ -567,22 +929,21 @@ class Program
         ";
 
         SqlCommand cmd =
-            new SqlCommand(deleteSql, conn, transaction);
+            new SqlCommand(
+                deleteSql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
-        cmd.Parameters.AddWithValue(
-            "@delete_limit",
-            random.Next(500, 3000)
-        );
+        cmd.Parameters.Add("@delete_limit", SqlDbType.Int).Value =
+            random.Next(500, 3000);
 
-        cmd.Parameters.AddWithValue(
-            "@age_minutes",
-            random.Next(1, 20)
-        );
+        cmd.Parameters.Add("@age_minutes", SqlDbType.Int).Value =
+            random.Next(1, 20);
 
-        cmd.Parameters.AddWithValue(
-            "@status",
-            Statuses[random.Next(Statuses.Length)]
-        );
+        cmd.Parameters.Add("@status", SqlDbType.VarChar, 50).Value =
+            Statuses[random.Next(Statuses.Length)];
 
         return cmd;
     }
@@ -592,11 +953,15 @@ class Program
 // ## Recommended Starting Environment Variables
 
 // ```bash
-// export WORKER_COUNT=6
-// export MAX_BATCHES=25
-// export MIN_BATCH_SIZE=500
-// export MAX_BATCH_SIZE=3000
-// export BATCH_DELAY_MS=100
+// export WORKER_COUNT=40
+// export REPORTING_WORKERS=12
+// export DEADLOCK_WORKERS=6
+// export SESSION_HOLDER_COUNT=220
+// export MAX_BATCHES=0
+// export MIN_BATCH_SIZE=750
+// export MAX_BATCH_SIZE=2500
+// export BATCH_DELAY_MS=0
+// export WORKLOAD_DURATION_MINUTES=30
 // ```
 
 // ## Expected Azure SQL Impact

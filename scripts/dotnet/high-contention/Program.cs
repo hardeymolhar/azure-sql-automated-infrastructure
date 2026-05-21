@@ -70,6 +70,7 @@ class Program
     private static readonly HashSet<int> RetryableErrors =
         new()
         {
+            1205,
             40197,
             40501,
             40613,
@@ -683,36 +684,71 @@ class Program
         bool reverseOrder =
             random.Next(100) < 50;
 
-        string sql =
+        string firstAccount =
             reverseOrder
-                ? @"
-                    UPDATE dbo.tbl_transactions_secure
-                    SET charged_fee = charged_fee + 1
-                    WHERE transaction_id = 1;
+                ? HotspotAccounts[0]
+                : HotspotAccounts[1];
 
-                    WAITFOR DELAY '00:00:01';
+        string secondAccount =
+            reverseOrder
+                ? HotspotAccounts[1]
+                : HotspotAccounts[0];
 
-                    UPDATE dbo.tbl_transactions_secure
-                    SET charged_fee = charged_fee + 1
-                    WHERE transaction_id = 2;
-                "
-                : @"
-                    UPDATE dbo.tbl_transactions_secure
-                    SET charged_fee = charged_fee + 1
-                    WHERE transaction_id = 2;
+        string sql =
+        @"
+        UPDATE TOP (500)
+            dbo.tbl_transactions_secure
+        SET
+            charged_fee = charged_fee + 1,
+            modified_on = SYSUTCDATETIME()
+        WHERE
+            source_account_number = @first_account
+            AND reversed = 0;
 
-                    WAITFOR DELAY '00:00:01';
+        WAITFOR DELAY '00:00:01';
 
-                    UPDATE dbo.tbl_transactions_secure
-                    SET charged_fee = charged_fee + 1
-                    WHERE transaction_id = 1;
-                ";
+        UPDATE TOP (500)
+            dbo.tbl_transactions_secure
+        SET
+            charged_fee = charged_fee + 1,
+            modified_on = SYSUTCDATETIME()
+        WHERE
+            source_account_number = @second_account
+            AND reversed = 0;
+        ";
 
         using SqlCommand cmd =
-            new(sql, conn, transaction);
+            new(
+                sql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
         cmd.CommandTimeout =
             120;
+
+        cmd.Parameters.Add(
+            new SqlParameter(
+                "@first_account",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = firstAccount
+            });
+
+        cmd.Parameters.Add(
+            new SqlParameter(
+                "@second_account",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = secondAccount
+            });
 
         await cmd.ExecuteNonQueryAsync();
     }
@@ -794,7 +830,12 @@ class Program
         ";
 
         SqlCommand cmd =
-            new(sql, conn, transaction);
+            new(
+                sql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
         DateTime now =
             DateTime.UtcNow;
@@ -823,121 +864,181 @@ class Program
 
         cmd.Parameters.Add(
             "@transaction_sub_type",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            31
         ).Value = GetWeightedTransactionType(random);
 
         cmd.Parameters.Add(
             "@transaction_type",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            50
         ).Value = GetWeightedTransactionType(random);
 
-        cmd.Parameters.Add(
-            "@amount",
-            SqlDbType.Decimal
-        ).Value = amount;
+        SqlParameter amountParameter =
+            cmd.Parameters.Add(
+                "@amount",
+                SqlDbType.Decimal
+            );
 
-        cmd.Parameters.Add(
-            "@charged_fee",
-            SqlDbType.Decimal
-        ).Value = fee;
+        amountParameter.Precision = 19;
+        amountParameter.Scale = 2;
+        amountParameter.Value = amount;
+
+        SqlParameter feeParameter =
+            cmd.Parameters.Add(
+                "@charged_fee",
+                SqlDbType.Decimal
+            );
+
+        feeParameter.Precision = 19;
+        feeParameter.Scale = 2;
+        feeParameter.Value = fee;
 
         cmd.Parameters.Add(
             "@currency_code",
-            SqlDbType.NVarChar
+            SqlDbType.Char,
+            3
         ).Value = "NGN";
 
         cmd.Parameters.Add(
-            "@source_account_number",
-            SqlDbType.NVarChar
-        ).Value = sourceAccount;
+            new SqlParameter(
+                "@source_account_number",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = sourceAccount
+            });
 
         cmd.Parameters.Add(
-            "@destination_account_number",
-            SqlDbType.NVarChar
-        ).Value = sourceAccount;
+            new SqlParameter(
+                "@destination_account_number",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = sourceAccount
+            });
 
         cmd.Parameters.Add(
-            "@destination_account_name",
-            SqlDbType.NVarChar
-        ).Value = "John Doe";
+            new SqlParameter(
+                "@destination_account_name",
+                SqlDbType.NVarChar,
+                150
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = "John Doe"
+            });
 
         cmd.Parameters.Add(
             "@destination_bank_code",
-            SqlDbType.NVarChar
+            SqlDbType.VarChar,
+            10
         ).Value = "044";
 
         cmd.Parameters.Add(
             "@destination_bank_name",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            100
         ).Value = "Access Bank";
 
         cmd.Parameters.Add(
             "@transaction_reference",
-            SqlDbType.UniqueIdentifier
-        ).Value = Guid.NewGuid();
+            SqlDbType.VarChar,
+            100
+        ).Value = Guid.NewGuid().ToString();
 
         cmd.Parameters.Add(
             "@transaction_external_reference",
-            SqlDbType.UniqueIdentifier
-        ).Value = Guid.NewGuid();
+            SqlDbType.VarChar,
+            100
+        ).Value = Guid.NewGuid().ToString();
 
         cmd.Parameters.Add(
             "@transaction_posting_reference",
-            SqlDbType.UniqueIdentifier
-        ).Value = Guid.NewGuid();
+            SqlDbType.VarChar,
+            100
+        ).Value = Guid.NewGuid().ToString();
 
         cmd.Parameters.Add(
             "@request_transaction_id",
-            SqlDbType.UniqueIdentifier
-        ).Value = Guid.NewGuid();
+            SqlDbType.VarChar,
+            100
+        ).Value = Guid.NewGuid().ToString();
 
         cmd.Parameters.Add(
             "@transaction_final_status",
-            SqlDbType.NVarChar
+            SqlDbType.VarChar,
+            50
         ).Value = Statuses[
             random.Next(Statuses.Length)
         ];
 
         cmd.Parameters.Add(
             "@transaction_request_status",
-            SqlDbType.NVarChar
+            SqlDbType.VarChar,
+            50
         ).Value = Statuses[
             random.Next(Statuses.Length)
         ];
 
         cmd.Parameters.Add(
-            "@session_key",
-            SqlDbType.NVarChar
-        ).Value = Guid.NewGuid().ToString();
+            new SqlParameter(
+                "@session_key",
+                SqlDbType.NVarChar,
+                255
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = Guid.NewGuid().ToString()
+            });
 
         cmd.Parameters.Add(
-            "@recharge_pin",
-            SqlDbType.NVarChar
-        ).Value = random.Next(1000, 9999).ToString();
+            new SqlParameter(
+                "@recharge_pin",
+                SqlDbType.NVarChar,
+                50
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = random.Next(1000, 9999).ToString()
+            });
 
         cmd.Parameters.Add(
-            "@electricity_token",
-            SqlDbType.NVarChar
-        ).Value = random.NextInt64(
-            100000000000,
-            999999999999
-        ).ToString();
+            new SqlParameter(
+                "@electricity_token",
+                SqlDbType.NVarChar,
+                100
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = random.NextInt64(
+                    100000000000,
+                    999999999999
+                ).ToString()
+            });
 
         cmd.Parameters.Add(
             "@user_name",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            50
         ).Value = Users[
             random.Next(Users.Length)
         ];
 
         cmd.Parameters.Add(
             "@created_by",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            100
         ).Value = "concurrency-worker";
 
         cmd.Parameters.Add(
             "@modified_by",
-            SqlDbType.NVarChar
+            SqlDbType.NVarChar,
+            100
         ).Value = "concurrency-worker";
 
         cmd.Parameters.Add(
@@ -999,7 +1100,12 @@ class Program
         ";
 
         SqlCommand cmd =
-            new(sql, conn, transaction);
+            new(
+                sql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
         cmd.Parameters.Add(
             "@update_limit",
@@ -1007,19 +1113,29 @@ class Program
         ).Value =
             random.Next(5000, 15000);
 
-        cmd.Parameters.Add(
-            "@fee_increment",
-            SqlDbType.Decimal
-        ).Value =
+        SqlParameter feeIncrementParameter =
+            cmd.Parameters.Add(
+                "@fee_increment",
+                SqlDbType.Decimal
+            );
+
+        feeIncrementParameter.Precision = 19;
+        feeIncrementParameter.Scale = 2;
+        feeIncrementParameter.Value =
             random.Next(10, 100);
 
         cmd.Parameters.Add(
-            "@hotspot_account",
-            SqlDbType.NVarChar
-        ).Value =
-            HotspotAccounts[
-                random.Next(HotspotAccounts.Length)
-            ];
+            new SqlParameter(
+                "@hotspot_account",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = HotspotAccounts[
+                    random.Next(HotspotAccounts.Length)
+                ]
+            });
 
         return cmd;
     }
@@ -1051,7 +1167,12 @@ class Program
         ";
 
         SqlCommand cmd =
-            new(sql, conn, transaction);
+            new(
+                sql,
+                conn,
+                transaction,
+                SqlCommandColumnEncryptionSetting.Enabled
+            );
 
         cmd.Parameters.Add(
             "@delete_limit",
@@ -1060,12 +1181,17 @@ class Program
             random.Next(2000, 8000);
 
         cmd.Parameters.Add(
-            "@hotspot_account",
-            SqlDbType.NVarChar
-        ).Value =
-            HotspotAccounts[
-                random.Next(HotspotAccounts.Length)
-            ];
+            new SqlParameter(
+                "@hotspot_account",
+                SqlDbType.NVarChar,
+                20
+            )
+            {
+                ForceColumnEncryption = true,
+                Value = HotspotAccounts[
+                    random.Next(HotspotAccounts.Length)
+                ]
+            });
 
         return cmd;
     }
@@ -1112,4 +1238,3 @@ class Program
             : defaultValue;
     }
 }
-

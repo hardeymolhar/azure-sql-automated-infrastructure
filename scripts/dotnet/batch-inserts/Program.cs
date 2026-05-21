@@ -16,7 +16,10 @@ class Program
             $"{Environment.GetEnvironmentVariable("SQL_SERVER_NAME")}.database.windows.net";
             
         string database =
-            Environment.GetEnvironmentVariable("DATABASE_NAME");
+            Environment.GetEnvironmentVariable("DATABASE_NAME")
+            ?? throw new InvalidOperationException(
+                "DATABASE_NAME environment variable is required."
+            );
 
         var credential =
             new DefaultAzureCredential();
@@ -181,13 +184,19 @@ VALUES
                 (SqlTransaction)await conn.BeginTransactionAsync();
 
             long batchStart = totalInserted + 1;
+            bool transactionCommitted = false;
 
             try
             {
             for (int rowInBatch = 0; rowInBatch < BatchSize; rowInBatch++)
             {
             using SqlCommand cmd =
-                new SqlCommand(insertSql, conn, transaction);
+                new SqlCommand(
+                    insertSql,
+                    conn,
+                    transaction,
+                    SqlCommandColumnEncryptionSetting.Enabled
+                );
 
             DateTime now = DateTime.UtcNow;
 
@@ -264,6 +273,7 @@ VALUES
                     20
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = random.NextInt64(
                         1000000000,
                         9999999999
@@ -277,6 +287,7 @@ VALUES
                     20
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = random.NextInt64(
                         1000000000,
                         9999999999
@@ -290,6 +301,7 @@ VALUES
                     150
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = "John Doe"
                 });
 
@@ -384,6 +396,7 @@ VALUES
                     255
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = Guid.NewGuid().ToString()
                 });
 
@@ -394,6 +407,7 @@ VALUES
                     50
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = random.Next(
                         1000,
                         9999
@@ -407,6 +421,7 @@ VALUES
                     100
                 )
                 {
+                    ForceColumnEncryption = true,
                     Value = random.NextInt64(
                         100000000000,
                         999999999999
@@ -505,6 +520,7 @@ VALUES
             }
 
             await transaction.CommitAsync();
+            transactionCommitted = true;
 
             Console.WriteLine(
                 $"Committed batch {batchNumber}/{maxBatches} " +
@@ -521,9 +537,37 @@ VALUES
                 await Task.Delay(batchDelayMilliseconds);
             }
             }
-            catch
+            catch (Exception ex)
             {
-                await transaction.RollbackAsync();
+                Console.Error.WriteLine(
+                    $"Batch {batchNumber} failed after " +
+                    $"{totalInserted - batchStart + 1} attempted rows. " +
+                    "Original error:"
+                );
+
+                Console.Error.WriteLine(
+                    ex
+                );
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync();
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        Console.Error.WriteLine(
+                            "Rollback could not be completed because the " +
+                            "transaction was already closed by the server/client:"
+                        );
+
+                        Console.Error.WriteLine(
+                            rollbackEx
+                        );
+                    }
+                }
+
                 throw;
             }
         }
