@@ -1,0 +1,120 @@
+---
+- name: Run Controlled Azure SQL .NET Workload
+  hosts: rhel_vm
+  become: true
+
+  vars:
+
+    project_root: "{{ playbook_dir }}/../.."
+
+    local_dotnet_scripts_dir: "{{ project_root }}/scripts/dotnet"
+
+    remote_scripts_dir: "/usr/local/azure-sql-workloads/dotnet"
+
+    remote_cache_dir: "/usr/local/azure-sql-workloads/cache"
+
+    controlled_workload_log: "{{ remote_scripts_dir }}/controlled-workload/controlled-workload.log"
+
+    controlled_worker_count: "{{ worker_count | default(2) }}"
+
+    controlled_insert_batch_size: "{{ insert_batch_size | default(8) }}"
+
+    controlled_max_cycles: "{{ max_cycles | default(0) }}"
+
+    controlled_workload_duration_minutes: "{{ workload_duration_minutes | default(0) }}"
+
+    controlled_after_commit_delay_ms: "{{ after_commit_delay_ms | default(3000) }}"
+
+    controlled_after_select_delay_ms: "{{ after_select_delay_ms | default(5000) }}"
+
+    dotnet_install_dir: "/home/sqladmin/.dotnet"
+
+    dotnet_runtime_path: "/home/sqladmin/.dotnet:/usr/local/bin:/usr/bin:/bin"
+
+  tasks:
+
+    - name: Create controlled workload project directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}/controlled-workload"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+
+    - name: Create remote .NET cache directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: sqladmin
+        group: sqladmin
+        mode: '0755'
+      loop:
+        - "{{ remote_cache_dir }}"
+        - "{{ remote_cache_dir }}/dotnet-cli"
+        - "{{ remote_cache_dir }}/nuget"
+        - "{{ remote_cache_dir }}/nuget/packages"
+        - "{{ remote_cache_dir }}/nuget/http-cache"
+        - "{{ remote_cache_dir }}/nuget/scratch"
+        - "{{ remote_cache_dir }}/tmp"
+
+    - name: Upload controlled workload Program.cs
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/controlled-workload/Program.cs"
+        dest: "{{ remote_scripts_dir }}/controlled-workload/Program.cs"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    - name: Upload controlled workload csproj
+      ansible.builtin.copy:
+        src: "{{ local_dotnet_scripts_dir }}/controlled-workload/controlled-workload.csproj"
+        dest: "{{ remote_scripts_dir }}/controlled-workload/controlled-workload.csproj"
+        owner: sqladmin
+        group: sqladmin
+        mode: '0644'
+
+    - name: Run controlled workload
+      ansible.builtin.shell: |
+        source ~/.bashrc
+        rm -rf bin obj
+
+        dotnet nuget locals all --clear
+
+        dotnet restore --force --no-cache
+
+        dotnet build
+
+        rm -f "{{ controlled_workload_log }}"
+
+        stdbuf -oL -eL \
+        dotnet run --project controlled-workload.csproj --no-build \
+        2>&1 | tee "{{ controlled_workload_log }}"
+
+      args:
+        chdir: "{{ remote_scripts_dir }}/controlled-workload"
+        executable: /bin/bash
+      become: true
+      become_user: sqladmin
+
+      register: controlled_workload_output
+
+      environment:
+        SQL_SERVER_NAME: "{{ sql_server_name }}"
+        DATABASE_NAME: "{{ database_name }}"
+        WORKER_COUNT: "{{ controlled_worker_count }}"
+        INSERT_BATCH_SIZE: "{{ controlled_insert_batch_size }}"
+        MAX_CYCLES: "{{ controlled_max_cycles }}"
+        WORKLOAD_DURATION_MINUTES: "{{ controlled_workload_duration_minutes }}"
+        AFTER_COMMIT_DELAY_MS: "{{ controlled_after_commit_delay_ms }}"
+        AFTER_SELECT_DELAY_MS: "{{ controlled_after_select_delay_ms }}"
+        DOTNET_ROOT: "{{ dotnet_install_dir }}"
+        DOTNET_CLI_HOME: "{{ remote_cache_dir }}/dotnet-cli"
+        NUGET_PACKAGES: "{{ remote_cache_dir }}/nuget/packages"
+        NUGET_HTTP_CACHE_PATH: "{{ remote_cache_dir }}/nuget/http-cache"
+        NUGET_SCRATCH: "{{ remote_cache_dir }}/nuget/scratch"
+        TMPDIR: "{{ remote_cache_dir }}/tmp"
+        PATH: "{{ dotnet_runtime_path }}"
+
+    - name: Print controlled workload output
+      ansible.builtin.debug:
+        var: controlled_workload_output.stdout_lines

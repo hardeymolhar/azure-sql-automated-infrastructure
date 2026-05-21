@@ -154,13 +154,13 @@
 
     - name: Configure global dotnet and sqlcmd paths
       ansible.builtin.copy:
-      dest: /etc/profile.d/custom-paths.sh
-      content: |
-        export DOTNET_ROOT="/home/sqladmin/.dotnet"
-        export PATH="$PATH:/home/sqladmin/.dotnet:/opt/mssql-tools18/bin"
-      owner: root
-      group: root
-      mode: '0644'
+        dest: /etc/profile.d/custom-paths.sh
+        content: |
+          export DOTNET_ROOT="/home/sqladmin/.dotnet"
+          export PATH="$PATH:/home/sqladmin/.dotnet:/opt/mssql-tools18/bin"
+        owner: root
+        group: root
+        mode: '0644'
 
     - name: Reload global profile
       shell: |
