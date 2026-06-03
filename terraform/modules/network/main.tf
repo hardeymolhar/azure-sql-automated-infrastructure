@@ -1,10 +1,29 @@
+# =====================================================
+# Virtual Network + Subnets
+# =====================================================
+resource "azurerm_virtual_network" "vnet" {
+  for_each = var.network_structure
 
+  name                = each.key
+  location            = var.primary_location
+  resource_group_name = var.primary_rg
+  address_space       = each.value.address_space
+}
 
+resource "azurerm_subnet" "subnet" {
+  for_each = local.subnet_map
+
+  name                 = each.value.subnet_name
+  resource_group_name  = var.primary_rg
+  virtual_network_name = azurerm_virtual_network.vnet[each.value.vnet_name].name
+
+  address_prefixes = each.value.prefix
+}
 
 
 resource "azurerm_private_dns_zone" "vault" {
   name                = "privatelink.vaultcore.azure.net"
-  resource_group_name = var.primary_rg  
+  resource_group_name = var.primary_rg
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "vault_link" {
@@ -99,6 +118,30 @@ resource "azurerm_public_ip" "db_vm_pip" {
   resource_group_name = var.primary_rg
   allocation_method   = "Static"
   sku                 = "Standard"
+}
+
+
+# =====================================================
+# Bastion Public IP + Host
+# =====================================================
+resource "azurerm_public_ip" "bastion_pip" {
+  name                = "pip-bastion-eastus"
+  location            = var.primary_location
+  resource_group_name = var.primary_rg
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_bastion_host" "bastion" {
+  name                = "bastion-eastus"
+  location            = var.primary_location
+  resource_group_name = var.primary_rg
+
+  ip_configuration {
+    name                 = "bastion-ipcfg"
+    subnet_id            = azurerm_subnet.subnet["dev-vnet-AzureBastionSubnet"].id
+    public_ip_address_id = azurerm_public_ip.bastion_pip.id
+  }
 }
 
 resource "azurerm_network_security_group" "nsg" {

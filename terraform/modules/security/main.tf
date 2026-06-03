@@ -27,16 +27,13 @@ STEPS TO SWITCHING TDE PROTECTOR FROM MICROSOFT MANAGED KEY (MMK) TO KEY VAULT K
 
 
 resource "time_sleep" "wait_for_identity" {
-  depends_on = [
-    azurerm_mssql_server.sql,
-    azurerm_mssql_server.sql_secondary
-  ]
-
+  # SQL servers are created in the sql module; this module depends on them
+  # implicitly through the identity variables wired in from the root module.
   create_duration = "90s"
 }
 
 resource "azurerm_key_vault" "kv" {
-  name                = "kv-${random_string.suffix.result}"
+  name                = "kv-${var.name_suffix}"
   location            = var.primary_location
   resource_group_name = var.primary_rg
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -60,8 +57,8 @@ resource "azurerm_key_vault" "kv" {
 
 resource "azurerm_key_vault_access_policy" "sql_policy" {
   key_vault_id = azurerm_key_vault.kv.id
-  tenant_id    = azurerm_mssql_server.sql.identity[0].tenant_id
-  object_id    = azurerm_mssql_server.sql.identity[0].principal_id
+  tenant_id    = var.sql_identity_tenant_id
+  object_id    = var.sql_identity_principal_id
 
   key_permissions = [
     "Get",
@@ -69,15 +66,14 @@ resource "azurerm_key_vault_access_policy" "sql_policy" {
     "UnwrapKey"
   ]
   depends_on = [
-    azurerm_mssql_server.sql,
     time_sleep.wait_for_identity
   ]
 }
 
 resource "azurerm_key_vault_access_policy" "sql_secondary_policy" {
   key_vault_id = azurerm_key_vault.kv.id
-  tenant_id    = azurerm_mssql_server.sql_secondary.identity[0].tenant_id
-  object_id    = azurerm_mssql_server.sql_secondary.identity[0].principal_id
+  tenant_id    = var.sql_secondary_identity_tenant_id
+  object_id    = var.sql_secondary_identity_principal_id
 
   key_permissions = [
     "Get",
@@ -85,7 +81,6 @@ resource "azurerm_key_vault_access_policy" "sql_secondary_policy" {
     "UnwrapKey"
   ]
   depends_on = [
-    azurerm_mssql_server.sql_secondary,
     time_sleep.wait_for_identity
   ]
 }
@@ -150,7 +145,7 @@ resource "azurerm_key_vault_key" "sql_key" {
 
 resource "azurerm_key_vault_secret" "ssh_private_key" {
   name         = "vm-ssh-private-key"
-  value = file(pathexpand("~/.ssh/ssh_key/vm-key/vm-key"))
+  value        = file(pathexpand("~/.ssh/ssh_key/vm-key/vm-key"))
   key_vault_id = azurerm_key_vault.kv.id
 
   depends_on = [azurerm_key_vault_access_policy.terraform_policy]
@@ -168,7 +163,7 @@ This is often referred to as "Bring Your Own Key" (BYOK) for TDE.
 */
 
 resource "azurerm_mssql_server_transparent_data_encryption" "tde_key" {
-  server_id        = azurerm_mssql_server.sql.id
+  server_id        = var.sql_server_id
   key_vault_key_id = azurerm_key_vault_key.sql_key.id
 
   depends_on = [
@@ -180,7 +175,7 @@ resource "azurerm_mssql_server_transparent_data_encryption" "tde_key" {
 
 
 resource "azurerm_mssql_server_transparent_data_encryption" "tde_key_secondary" {
-  server_id        = azurerm_mssql_server.sql_secondary.id
+  server_id        = var.sql_secondary_server_id
   key_vault_key_id = azurerm_key_vault_key.sql_key.id
 
   depends_on = [

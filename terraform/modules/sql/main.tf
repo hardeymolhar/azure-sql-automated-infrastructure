@@ -85,6 +85,25 @@ resource "azurerm_mssql_database" "db" {
 }
 
 ############################################
+# SECONDARY  DATABASE
+############################################
+
+
+resource "azurerm_mssql_database" "db_secondary" {
+
+  count     = 10
+  name      = "AZ500LabDb-secondary-${count.index}"
+  server_id = azurerm_mssql_server.sql_secondary.id
+
+  create_mode = "Secondary"
+
+  creation_source_database_id = azurerm_mssql_database.db[count.index].id
+
+  sku_name = "Basic"
+}
+
+
+############################################
 # SQL AUDITING - SERVER LEVEL
 ############################################
 # Enables Azure SQL Auditing on both logical servers.
@@ -105,7 +124,7 @@ resource "azurerm_mssql_server_extended_auditing_policy" "sql_secondary_audit" {
 resource "azurerm_monitor_diagnostic_setting" "sql_server_audit_logs" {
   name                       = "sql-server-audit-logs"
   target_resource_id         = "${azurerm_mssql_server.sql.id}/databases/master"
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log {
     category = "SQLSecurityAuditEvents"
@@ -122,7 +141,7 @@ resource "azurerm_monitor_diagnostic_setting" "sql_server_audit_logs" {
 resource "azurerm_monitor_diagnostic_setting" "sql_secondary_server_audit_logs" {
   name                       = "sql-secondary-server-audit-logs"
   target_resource_id         = "${azurerm_mssql_server.sql_secondary.id}/databases/master"
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log {
     category = "SQLSecurityAuditEvents"
@@ -170,7 +189,7 @@ resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_audit_logs" {
 
   name                       = "sql-db-secondary-audit-${each.key}"
   target_resource_id         = each.value
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log {
     category = "SQLSecurityAuditEvents"
@@ -245,6 +264,32 @@ resource "azurerm_mssql_firewall_rule" "sql_allow_client_secondary" {
   server_id        = azurerm_mssql_server.sql_secondary.id
   start_ip_address = var.client_ip
   end_ip_address   = var.client_ip
+}
+
+
+############################################
+# DATABASE DIAGNOSTIC SETTINGS
+############################################
+# Streams per-database logs/metrics to the Log Analytics
+# Workspace owned by the monitoring module (passed in as a variable).
+resource "azurerm_monitor_diagnostic_setting" "sql_db_logs" {
+  for_each = {
+    for idx, db in azurerm_mssql_database.db :
+    idx => db.id
+  }
+
+  name                       = "sql-db-diag-${each.key}"
+  target_resource_id         = each.value
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  enabled_log {
+    category_group = "allLogs"
+  }
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
 }
 
 

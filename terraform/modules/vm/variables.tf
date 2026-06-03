@@ -106,3 +106,17 @@ variable "storage_connection_string" {
   type      = string
   sensitive = true
 }
+
+# ========================================
+# Wiring from the network module
+# ========================================
+
+variable "nic_id" {
+  description = "ID of the Linux VM network interface (from the network module)"
+  type        = string
+}
+
+variable "db_nic_id" {
+  description = "ID of the Database VM network interface (from the network module)"
+  type        = string
+}

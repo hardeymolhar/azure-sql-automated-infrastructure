@@ -98,3 +98,38 @@ output "sql_firewall_rules" {
     secondary_firewall_client_ip = azurerm_mssql_firewall_rule.sql_allow_client_secondary.start_ip_address
   }
 }
+
+# ========================================
+# Cross-module wiring outputs
+# (consumed by security & private-endpoints)
+# ========================================
+
+output "name_suffix" {
+  description = "Random suffix used for naming SQL-related resources"
+  value       = random_string.suffix.result
+}
+
+output "primary_database_ids" {
+  description = "IDs of all primary SQL databases"
+  value       = azurerm_mssql_database.db[*].id
+}
+
+output "primary_sql_identity_tenant_id" {
+  description = "Tenant ID of the primary SQL Server managed identity"
+  value       = azurerm_mssql_server.sql.identity[0].tenant_id
+}
+
+output "primary_sql_identity_principal_id" {
+  description = "Principal ID of the primary SQL Server managed identity"
+  value       = azurerm_mssql_server.sql.identity[0].principal_id
+}
+
+output "secondary_sql_identity_tenant_id" {
+  description = "Tenant ID of the secondary SQL Server managed identity"
+  value       = azurerm_mssql_server.sql_secondary.identity[0].tenant_id
+}
+
+output "secondary_sql_identity_principal_id" {
+  description = "Principal ID of the secondary SQL Server managed identity"
+  value       = azurerm_mssql_server.sql_secondary.identity[0].principal_id
+}

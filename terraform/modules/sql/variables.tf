@@ -30,3 +30,8 @@ variable "secondary_location" {
 variable "client_ip" {
   type = string
 }
+
+variable "log_analytics_workspace_id" {
+  description = "ID of the Log Analytics Workspace (from the monitoring module)"
+  type        = string
+}

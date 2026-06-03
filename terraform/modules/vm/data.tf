@@ -1,10 +1,10 @@
 
 #======
-#SAS
+# SAS token for bootstrap scripts (storage connection string wired in from root)
 #======
 
 data "azurerm_storage_account_sas" "script_sas" {
-  connection_string = data.terraform_remote_state.storage.outputs.primary_connection_string
+  connection_string = var.storage_connection_string
   https_only        = true
 
   resource_types {
@@ -36,4 +36,3 @@ data "azurerm_storage_account_sas" "script_sas" {
     tag     = false
   }
 }
-

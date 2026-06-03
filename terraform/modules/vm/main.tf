@@ -1,8 +1,6 @@
 
 resource "azurerm_linux_virtual_machine" "vm" {
 
-  depends_on = [azurerm_bastion_host.bastion]
-
   count               = var.linux_vm_count
   name                = var.vm_name
   resource_group_name = var.primary_rg
@@ -25,7 +23,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
 
   network_interface_ids = [
-    azurerm_network_interface.nic.id,
+    var.nic_id,
   ]
 
   zone = var.availability_zone
@@ -93,7 +91,7 @@ resource "azurerm_windows_virtual_machine" "db_vm" {
   }
 
   network_interface_ids = [
-    azurerm_network_interface.db_nic.id
+    var.db_nic_id
   ]
 
   os_disk {
@@ -125,7 +123,6 @@ resource "azurerm_virtual_machine_extension" "winrm" {
   })
 
   depends_on = [
-    azurerm_windows_virtual_machine.db_vm[0],
-    azurerm_network_interface.db_nic
+    azurerm_windows_virtual_machine.db_vm[0]
   ]
 }

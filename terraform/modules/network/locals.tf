@@ -1,9 +1,3 @@
-
-locals {
-  client_ip = chomp(data.http.client_ip.response_body)
-}
-
-
 locals {
   network_structure = {
     dev-vnet = {
@@ -71,7 +65,7 @@ locals {
   cidr_map = {
     app_subnet = local.network_structure["dev-vnet"].subnets["app-subnet"].address_prefix[0]
     pe_subnet  = local.network_structure["dev-vnet"].subnets["pe-subnet"].address_prefix[0]
-    client_ip  = local.client_ip
+    client_ip  = var.client_ip
   }
 }
 

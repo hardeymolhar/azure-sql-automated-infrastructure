@@ -10,6 +10,18 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0.0" # Use a stable Azure provider version
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.0" # Used to look up the current client IP
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0" # Used for resource name suffixes
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.13" # Used to wait for identity propagation
+    }
     tls = {
       source  = "hashicorp/tls"
       version = "~> 4.0" # Used for generating security keys
