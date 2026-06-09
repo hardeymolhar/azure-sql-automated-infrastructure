@@ -1,0 +1,38 @@
+{
+  "servers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+
+    "azure": {
+      "command": "npx",
+      "args": ["-y", "@azure/mcp", "server", "start"]
+    },
+
+    "ansible": {
+      "command": "npx",
+      "args": ["-y", "@ansible/ansible-mcp-server", "--stdio"]
+    },
+
+    "terraform": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "hashicorp/terraform-mcp-server"
+      ]
+    },
+
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    }
+  }
+}
