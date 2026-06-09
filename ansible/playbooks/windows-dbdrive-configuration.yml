@@ -1,0 +1,158 @@
+---
+- name: Configure Azure Windows SQL Server Database Disks
+  hosts: windows_vm
+  gather_facts: false
+
+  # Windows counterpart of dbdrive-configuration.yml (RHEL). The encrypted data
+  # disks are created + attached at LUN 0-3 by scripts/shell/test-env/
+  # win-encrypted-disks.sh; this play initializes (GPT), partitions and formats
+  # them as NTFS SQL drives and lays out the SQL directory structure.
+  #
+  # Uses the official ansible.windows / community.windows disk modules:
+  #   win_initialize_disk, win_partition, win_format.
+  vars:
+    disk_layout:
+      - lun: 0
+        drive_letter: F
+        label: SQLDATA
+        dir: SQLDATA
+
+      - lun: 1
+        drive_letter: G
+        label: SQLLOG
+        dir: SQLLOG
+
+      - lun: 2
+        drive_letter: T
+        label: SQLTEMPDB
+        dir: TEMPDB
+
+      - lun: 3
+        drive_letter: H
+        label: SQLBACKUP
+        dir: SQLBACKUP
+
+    # 64 KB allocation unit — SQL Server data/log best practice.
+    sql_allocation_unit_size: 65536
+
+    # Safety gate (mirrors the RHEL playbook): only re-initialize/format disks
+    # that are NOT already RAW when this is true.
+    force_wipe: false
+
+  tasks:
+    # =====================================================
+    # RESOLVE AZURE LUN -> WINDOWS DISK NUMBER
+    # -----------------------------------------------------
+    # Windows has no /dev/disk/azure/scsi1/lunN symlink, so we map each data
+    # disk's Azure LUN (Win32_DiskDrive.SCSILogicalUnit) to its Windows disk
+    # number (Win32_DiskDrive.Index), excluding the OS disk (index 0) and the
+    # Azure temporary/resource disk (volume label "Temporary Storage").
+    # =====================================================
+    - name: Resolve Azure data-disk LUN to Windows disk number
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $tempDiskNumbers = @(
+          Get-Volume -ErrorAction SilentlyContinue |
+            Where-Object { $_.FileSystemLabel -eq 'Temporary Storage' } |
+            ForEach-Object {
+              $p = Get-Partition -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue
+              $p.DiskNumber
+            }
+        )
+        $result = foreach ($d in (Get-CimInstance -ClassName Win32_DiskDrive)) {
+          if ($d.Index -eq 0) { continue }
+          if ($tempDiskNumbers -contains $d.Index) { continue }
+          $disk = Get-Disk -Number $d.Index
+          [pscustomobject]@{
+            lun    = [int]$d.SCSILogicalUnit
+            number = [int]$d.Index
+            raw    = ($disk.PartitionStyle -eq 'RAW')
+          }
+        }
+        ConvertTo-Json @($result) -Compress
+      register: lun_map_raw
+      changed_when: false
+
+    - name: Parse the resolved disk map
+      ansible.builtin.set_fact:
+        azure_disks: "{{ lun_map_raw.stdout | from_json }}"
+
+    - name: Merge desired layout with the resolved disks
+      ansible.builtin.set_fact:
+        win_disks: "{{ win_disks | default([]) + [item | combine(azure_disks | selectattr('lun', 'equalto', item.lun) | list | first)] }}"
+      loop: "{{ disk_layout }}"
+      loop_control:
+        label: "LUN {{ item.lun }} -> {{ item.drive_letter }}:"
+
+    - name: Build the drive-letter list for verification
+      ansible.builtin.set_fact:
+        drive_letters: "{{ win_disks | map(attribute='drive_letter') | join(',') }}"
+
+    - name: Show resolved disk mapping
+      ansible.builtin.debug:
+        var: win_disks
+
+    # =====================================================
+    # INITIALIZE -> PARTITION -> FORMAT
+    # Only act on RAW disks unless force_wipe is set, so re-runs are idempotent
+    # and existing data is never reformatted by accident.
+    # =====================================================
+    - name: Initialize raw disks (GPT)
+      community.windows.win_initialize_disk:
+        disk_number: "{{ item.number }}"
+        style: gpt
+        online: true
+      loop: "{{ win_disks }}"
+      loop_control:
+        label: "disk {{ item.number }} (LUN {{ item.lun }})"
+      when: item.raw | bool or force_wipe | bool
+
+    - name: Create one partition spanning each disk
+      community.windows.win_partition:
+        disk_number: "{{ item.number }}"
+        drive_letter: "{{ item.drive_letter }}"
+        partition_size: -1
+        state: present
+      loop: "{{ win_disks }}"
+      loop_control:
+        label: "{{ item.drive_letter }}: (disk {{ item.number }})"
+      when: item.raw | bool or force_wipe | bool
+
+    - name: Format partitions as NTFS with SQL labels
+      community.windows.win_format:
+        drive_letter: "{{ item.drive_letter }}"
+        file_system: ntfs
+        new_label: "{{ item.label }}"
+        allocation_unit_size: "{{ sql_allocation_unit_size }}"
+        force: "{{ force_wipe }}"
+      loop: "{{ win_disks }}"
+      loop_control:
+        label: "{{ item.drive_letter }}: ({{ item.label }})"
+      when: item.raw | bool or force_wipe | bool
+
+    # =====================================================
+    # SQL DIRECTORY STRUCTURE
+    # =====================================================
+    - name: Create the SQL directory on each drive
+      ansible.windows.win_file:
+        path: "{{ item.drive_letter }}:\\{{ item.dir }}"
+        state: directory
+      loop: "{{ win_disks }}"
+      loop_control:
+        label: "{{ item.drive_letter }}:\\{{ item.dir }}"
+
+    # =====================================================
+    # VERIFY
+    # =====================================================
+    - name: Gather the resulting volumes
+      ansible.windows.win_shell: |
+        Get-Volume -DriveLetter {{ drive_letters }} |
+          Select-Object DriveLetter, FileSystemLabel, FileSystem,
+            @{N='SizeGB';E={[math]::Round($_.Size/1GB,0)}} |
+          ConvertTo-Json -Compress
+      register: volumes_out
+      changed_when: false
+
+    - name: Show final drive configuration
+      ansible.builtin.debug:
+        var: volumes_out.stdout
