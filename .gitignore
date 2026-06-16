@@ -12,3 +12,12 @@ collections
 .env
 bin/
 obj/
+*.claude
+CLAUDE.md
+
+# Generated Terraform plan artifacts
+tfplan
+*.tfplan
+
+# Vendored Microsoft DP-300 lab (its own ~200MB git repo)
+scripts/shell/dp-300-database-administrator/
