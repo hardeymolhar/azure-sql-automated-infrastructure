@@ -41,8 +41,8 @@ else
   az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
     --vnet-name "$VNET_NAME" \
-    --name "$BASTION_SUBNET_NAME" \
-    --address-prefixes "$BASTION_SUBNET_PREFIX"
+    --name "$AZURE_BASTION_SUBNET_NAME" \
+    --address-prefixes "$AZURE_BASTION_SUBNET_PREFIX"
 fi
 
 # =========================================================
@@ -98,7 +98,7 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --nsg-name "$NSG_NAME" \
     --name "Allow-RDP-Bastion" \
-    --priority 1100 \
+    --priority 1200 \
     --direction Inbound \
     --access Allow \
     --protocol Tcp \
@@ -132,11 +132,11 @@ fi
 # RESOLVE VM RESOURCE IDS (for connection commands)
 # =========================================================
 
-LIN_VM_ID=$(az vm show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$VM_NAME" \
-  --query id \
-  -o tsv)
+# LIN_VM_ID=$(az vm show \
+#   --resource-group "$RESOURCE_GROUP" \
+#   --name "$VM_NAME" \
+#   --query id \
+#   -o tsv)
 
 WIN_VM_ID=$(az vm show \
   --resource-group "$RESOURCE_GROUP" \

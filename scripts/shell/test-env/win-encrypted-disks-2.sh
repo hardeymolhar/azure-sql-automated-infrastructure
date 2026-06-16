@@ -175,6 +175,6 @@ echo -e "${GREEN}LUN 1 (LOG):${NC}       $WIN_LOG_DISK_2    -> drive G: (SQLLOG)
 echo -e "${GREEN}LUN 2 (TEMPDB):${NC}    $WIN_TEMP_DISK_2   -> drive T: (SQLTEMPDB)"
 echo -e "${GREEN}LUN 3 (BACKUP):${NC}    $WIN_BACKUP_DISK_2 -> drive H: (SQLBACKUP)"
 echo ""
-echo -e "${GREEN}Next:${NC} run vm-config.sh to partition/format the drives in-guest"
+echo -e "${GREEN}Next:${NC} run vm-stg-ind-110.sh to partition/format the drives in-guest"
 echo -e "      (ansible/playbooks/windows-dbdrive-configuration.yml)."
 echo -e "${GREEN}==========================================${NC}"

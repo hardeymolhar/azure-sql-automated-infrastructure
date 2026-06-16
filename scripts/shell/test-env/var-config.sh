@@ -3,6 +3,7 @@
 # =========================================================
 # COLORS
 # =========================================================
+
 set -euo pipefail
 source "$(dirname "$0")/env.conf"
 
@@ -73,9 +74,9 @@ find "$TARGET_DIR" \
     # =========================================================
     # REPLACE INFRASTRUCTURE RESOURCE SUFFIXES
     # Example:
-    # vm-9r5-1n4-77 -> vm-9r5-1n4-77
-    # kv-9r5-1n4-77 -> kv-9r5-1n4-77
-    # sql-des-9r5-1n4-77 -> sql-des-9r5-1n4-77
+    # vm-stg-ind-110 -> vm-stg-ind-110
+    # kv-stg-ind-110 -> kv-stg-ind-110
+    # sql-des-stg-ind-110 -> sql-des-stg-ind-110
     # =========================================================
 
 perl -pi -e "s/([\"'=:\x20])(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|data-dsk|log-dsk|temp-dsk|backup-dsk)-[a-zA-Z0-9-]+/\1\2-$NEW_ID/g" "$file"

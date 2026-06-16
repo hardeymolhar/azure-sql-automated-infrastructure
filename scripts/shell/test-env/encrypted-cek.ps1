@@ -1,6 +1,6 @@
-$RESOURCE_SUFFIX = "9r5-1n4-77"
+# =========================================================
 
-$sqlServerName="sqlserver-$RESOURCE_SUFFIX"
+./env.ps1
 
 $resourceGroup = az group list `
   --query "[?contains(name, '$RESOURCE_SUFFIX')].name | [0]" `
