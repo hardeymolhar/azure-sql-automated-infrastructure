@@ -6,7 +6,7 @@ source "$(dirname "$0")/env.conf"
 
 VM_IP=$(az vm list-ip-addresses \
   --resource-group "$RESOURCE_GROUP" \
-  --name "vm-9r5-1n4-77" \
+  --name "vm-stg-ind-110" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 
@@ -87,6 +87,9 @@ else
 
 fi
 
+
+echo "CLIENT_IP=[$CLIENT_IP]"
+
 if az sql server firewall-rule show \
     --resource-group "$RESOURCE_GROUP" \
     --server "$SQL_SERVER_NAME" \
@@ -102,8 +105,20 @@ else
         --resource-group "$RESOURCE_GROUP" \
         --server "$SQL_SERVER_NAME" \
         --name "$VM_FIREWALL_RULE_NAME" \
-        --start-ip-address "$VM_IP" \
-        --end-ip-address "$VM_IP"
+        --start-ip-address "$(az vm show \
+                                --resource-group "$RESOURCE_GROUP" \
+                                --name "$VM_NAME" \
+                                -d \
+                                --query publicIps \
+                                -o tsv)" \
+        --end-ip-address "$(az vm show \
+                                --resource-group "$RESOURCE_GROUP" \
+                                --name "$VM_NAME" \
+                                -d \
+                                --query publicIps \
+                                -o tsv)"
+
+
 
 fi
 
