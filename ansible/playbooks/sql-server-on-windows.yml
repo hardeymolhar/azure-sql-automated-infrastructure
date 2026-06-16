@@ -89,77 +89,77 @@
     # dir before install — a bad attempt self-heals. All gated on the engine not
     # being installed yet (skipped entirely once SQL is present → idempotent).
     # =====================================================
-    - name: Create the SQL media working directory
-      ansible.windows.win_file:
-        path: "{{ sql_media_dir }}"
-        state: directory
-      when: not sql_engine.stat.exists
+    # - name: Create the SQL media working directory
+    #   ansible.windows.win_file:
+    #     path: "{{ sql_media_dir }}"
+    #     state: directory
+    #   when: not sql_engine.stat.exists
 
-    - name: Download the SQL Server 2022 Developer bootstrapper
-      ansible.windows.win_get_url:
-        url: "{{ sql_installer_url }}"
-        dest: "{{ sql_ssei_path }}"
-        force: false
-      when: not sql_engine.stat.exists
+    # - name: Download the SQL Server 2022 Developer bootstrapper
+    #   ansible.windows.win_get_url:
+    #     url: "{{ sql_installer_url }}"
+    #     dest: "{{ sql_ssei_path }}"
+    #     force: false
+    #   when: not sql_engine.stat.exists
 
-    - name: Download the full SQL Server installation media (CAB)
-      ansible.windows.win_command: >-
-        "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-        /MEDIAPATH={{ sql_media_dir }} /QUIET
-      args:
-        creates: "{{ sql_box_exe }}"
-      when: not sql_engine.stat.exists
+    # - name: Download the full SQL Server installation media (CAB)
+    #   ansible.windows.win_command: >-
+    #     "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+    #     /MEDIAPATH={{ sql_media_dir }} /QUIET
+    #   args:
+    #     creates: "{{ sql_box_exe }}"
+    #   when: not sql_engine.stat.exists
 
-    - name: Check the downloaded media package
-      ansible.windows.win_stat:
-        path: "{{ sql_box_exe }}"
-      register: sql_box_stat
-      when: not sql_engine.stat.exists
+    # - name: Check the downloaded media package
+    #   ansible.windows.win_stat:
+    #     path: "{{ sql_box_exe }}"
+    #   register: sql_box_stat
+    #   when: not sql_engine.stat.exists
 
-    - name: Remove the media package if it is missing/too small (corrupt or partial)
-      ansible.windows.win_file:
-        path: "{{ sql_box_exe }}"
-        state: absent
-      when:
-        - not sql_engine.stat.exists
-        - (sql_box_stat.stat.size | default(0)) < 104857600
+    # - name: Remove the media package if it is missing/too small (corrupt or partial)
+    #   ansible.windows.win_file:
+    #     path: "{{ sql_box_exe }}"
+    #     state: absent
+    #   when:
+    #     - not sql_engine.stat.exists
+    #     - (sql_box_stat.stat.size | default(0)) < 104857600
 
-    - name: Re-download the media package if it was removed
-      ansible.windows.win_command: >-
-        "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-        /MEDIAPATH={{ sql_media_dir }} /QUIET
-      args:
-        creates: "{{ sql_box_exe }}"
-      when: not sql_engine.stat.exists
+    # - name: Re-download the media package if it was removed
+    #   ansible.windows.win_command: >-
+    #     "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+    #     /MEDIAPATH={{ sql_media_dir }} /QUIET
+    #   args:
+    #     creates: "{{ sql_box_exe }}"
+    #   when: not sql_engine.stat.exists
 
-    - name: Remove any previous (possibly corrupt) extracted setup tree
-      ansible.windows.win_file:
-        path: '{{ sql_media_dir }}\setup'
-        state: absent
-      when: not sql_engine.stat.exists
+    # - name: Remove any previous (possibly corrupt) extracted setup tree
+    #   ansible.windows.win_file:
+    #     path: '{{ sql_media_dir }}\setup'
+    #     state: absent
+    #   when: not sql_engine.stat.exists
 
-    - name: Extract the SQL Server installation media into a clean directory
-      ansible.windows.win_command: >-
-        "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
-      args:
-        creates: "{{ sql_setup_path }}"
-      when: not sql_engine.stat.exists
+    # - name: Extract the SQL Server installation media into a clean directory
+    #   ansible.windows.win_command: >-
+    #     "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
+    #   args:
+    #     creates: "{{ sql_setup_path }}"
+    #   when: not sql_engine.stat.exists
 
-    - name: Verify SETUP.EXE extracted successfully
-      ansible.windows.win_stat:
-        path: "{{ sql_setup_path }}"
-      register: sql_setup_stat
-      when: not sql_engine.stat.exists
+    # - name: Verify SETUP.EXE extracted successfully
+    #   ansible.windows.win_stat:
+    #     path: "{{ sql_setup_path }}"
+    #   register: sql_setup_stat
+    #   when: not sql_engine.stat.exists
 
-    - name: Fail early if the SQL setup media is still missing
-      ansible.builtin.fail:
-        msg: >-
-          SQL setup not found at {{ sql_setup_path }} after extraction — the
-          downloaded media is corrupt/incomplete. Delete {{ sql_media_dir }} on
-          the VM and re-run to force a clean re-download.
-      when:
-        - not sql_engine.stat.exists
-        - not (sql_setup_stat.stat.exists | default(false))
+    # - name: Fail early if the SQL setup media is still missing
+    #   ansible.builtin.fail:
+    #     msg: >-
+    #       SQL setup not found at {{ sql_setup_path }} after extraction — the
+    #       downloaded media is corrupt/incomplete. Delete {{ sql_media_dir }} on
+    #       the VM and re-run to force a clean re-download.
+    #   when:
+    #     - not sql_engine.stat.exists
+    #     - not (sql_setup_stat.stat.exists | default(false))
 
     # =====================================================
     # UNATTENDED INSTALL (all prompts/approvals automated)
@@ -170,51 +170,51 @@
     # "Perform Volume Maintenance Task" right. Features add Replication + Full-Text.
     # The drives are formatted by windows-dbdrive-configuration.yml (runs first);
     # setup creates the subfolders. Applies to NEW VMs only (engine-absent gate).
-    - name: Install the SQL Server database engine unattended
-      ansible.windows.win_command: >-
-        "{{ sql_setup_path }}" /Q /ACTION=Install
-        /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
-        /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
-        /SQLSVCACCOUNT="NT AUTHORITY\System"
-        /AGTSVCACCOUNT="NT AUTHORITY\System"
-        /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
-        /SECURITYMODE=SQL /SAPWD="{{ sa_password }}"
-        /INSTANCEDIR="{{ sql_instance_dir }}"
-        /INSTALLSQLDATADIR="{{ sql_system_data_dir }}"
-        /SQLUSERDBDIR="{{ sql_default_data_dir }}"
-        /SQLUSERDBLOGDIR="{{ sql_default_log_dir }}"
-        /SQLTEMPDBDIR="{{ sql_tempdb_dir }}"
-        /SQLTEMPDBLOGDIR="{{ sql_tempdb_dir }}"
-        /SQLBACKUPDIR="{{ sql_backup_dir }}"
-        /SQLSVCINSTANTFILEINIT="True"
-        /TCPENABLED=1 /UPDATEENABLED=0
-      args:
-        creates: "{{ sql_engine_exe }}"
-      when: not sql_engine.stat.exists
-      no_log: false
+    # - name: Install the SQL Server database engine unattended
+    #   ansible.windows.win_command: >-
+    #     "{{ sql_setup_path }}" /Q /ACTION=Install
+    #     /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
+    #     /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
+    #     /SQLSVCACCOUNT="NT AUTHORITY\System"
+    #     /AGTSVCACCOUNT="NT AUTHORITY\System"
+    #     /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+    #     /SECURITYMODE=SQL /SAPWD="{{ sa_password }}"
+    #     /INSTANCEDIR="{{ sql_instance_dir }}"
+    #     /INSTALLSQLDATADIR="{{ sql_system_data_dir }}"
+    #     /SQLUSERDBDIR="{{ sql_default_data_dir }}"
+    #     /SQLUSERDBLOGDIR="{{ sql_default_log_dir }}"
+    #     /SQLTEMPDBDIR="{{ sql_tempdb_dir }}"
+    #     /SQLTEMPDBLOGDIR="{{ sql_tempdb_dir }}"
+    #     /SQLBACKUPDIR="{{ sql_backup_dir }}"
+    #     /SQLSVCINSTANTFILEINIT="True"
+    #     /TCPENABLED=1 /UPDATEENABLED=0
+    #   args:
+    #     creates: "{{ sql_engine_exe }}"
+    #   when: not sql_engine.stat.exists
+    #   no_log: false
 
-    - name: Ensure the SQL Server service is running and set to auto-start
-      ansible.windows.win_service:
-        name: MSSQLSERVER
-        state: started
-        start_mode: auto
+    # - name: Ensure the SQL Server service is running and set to auto-start
+    #   ansible.windows.win_service:
+    #     name: MSSQLSERVER
+    #     state: started
+    #     start_mode: auto
 
     # =====================================================
     # CONNECTIVITY
     # =====================================================
-    - name: Open Windows firewall for SQL Server (TCP 1433)
-      community.windows.win_firewall_rule:
-        name: "SQL Server (TCP 1433)"
-        localport: "{{ sql_port }}"
-        direction: in
-        action: allow
-        protocol: tcp
-        profiles:
-          - domain
-          - private
-          - public
-        state: present
-        enabled: true
+    # - name: Open Windows firewall for SQL Server (TCP 1433)
+    #   community.windows.win_firewall_rule:
+    #     name: "SQL Server (TCP 1433)"
+    #     localport: "{{ sql_port }}"
+    #     direction: in
+    #     action: allow
+    #     protocol: tcp
+    #     profiles:
+    #       - domain
+    #       - private
+    #       - public
+    #     state: present
+    #     enabled: true
 
     # =====================================================
     # ENABLE TCP/IP PROTOCOL — the engine often ships with the TCP/IP protocol
@@ -223,39 +223,39 @@
     # Pure-registry approach (no SMO/WMI dependency); idempotent via win_regedit,
     # and the restart only fires when something actually changed.
     # =====================================================
-    - name: Enable the SQL Server TCP/IP network protocol
-      ansible.windows.win_regedit:
-        path: "{{ sql_tcp_reg_path }}"
-        name: Enabled
-        data: 1
-        type: dword
-      register: tcp_enabled
+    # - name: Enable the SQL Server TCP/IP network protocol
+    #   ansible.windows.win_regedit:
+    #     path: "{{ sql_tcp_reg_path }}"
+    #     name: Enabled
+    #     data: 1
+    #     type: dword
+    #   register: tcp_enabled
 
-    - name: Pin SQL Server to the static TCP port and clear dynamic ports
-      ansible.windows.win_regedit:
-        path: "{{ sql_tcp_reg_path }}\\IPAll"
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: string
-      loop:
-        - { name: TcpPort, data: "{{ sql_port }}" }
-        - { name: TcpDynamicPorts, data: "" }
-      loop_control:
-        label: "{{ item.name }} = '{{ item.data }}'"
-      register: tcp_port
+    # - name: Pin SQL Server to the static TCP port and clear dynamic ports
+    #   ansible.windows.win_regedit:
+    #     path: "{{ sql_tcp_reg_path }}\\IPAll"
+    #     name: "{{ item.name }}"
+    #     data: "{{ item.data }}"
+    #     type: string
+    #   loop:
+    #     - { name: TcpPort, data: "{{ sql_port }}" }
+    #     - { name: TcpDynamicPorts, data: "" }
+    #   loop_control:
+    #     label: "{{ item.name }} = '{{ item.data }}'"
+    #   register: tcp_port
 
-    - name: Restart SQL Server to apply the TCP/IP protocol change
-      ansible.windows.win_service:
-        name: MSSQLSERVER
-        state: restarted
-      when: tcp_enabled is changed or tcp_port is changed
+    # - name: Restart SQL Server to apply the TCP/IP protocol change
+    #   ansible.windows.win_service:
+    #     name: MSSQLSERVER
+    #     state: restarted
+    #   when: tcp_enabled is changed or tcp_port is changed
 
-    - name: Wait for SQL Server to listen on the TCP port
-      ansible.windows.win_wait_for:
-        host: 127.0.0.1
-        port: "{{ sql_port }}"
-        delay: 5
-        timeout: 180
+    # - name: Wait for SQL Server to listen on the TCP port
+    #   ansible.windows.win_wait_for:
+    #     host: 127.0.0.1
+    #     port: "{{ sql_port }}"
+    #     delay: 5
+    #     timeout: 180
 
     # =====================================================
     # T-SQL CLIENT — engine-only install ships no sqlcmd, so use
@@ -264,35 +264,35 @@
     # TLS 1.2 must be forced before any PSGallery call: Windows PowerShell 5.1 on
     # Windows Server defaults to SSL3/TLS1.0, which PSGallery refuses, making
     # Install-PackageProvider / Install-Module fail with the module never landing.
-    - name: Ensure the NuGet package provider is available
-      ansible.windows.win_shell: >-
-        [Net.ServicePointManager]::SecurityProtocol =
-        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-      args:
-        creates: 'C:\Program Files\PackageManagement\ProviderAssemblies\nuget'
+    # - name: Ensure the NuGet package provider is available
+    #   ansible.windows.win_shell: >-
+    #     [Net.ServicePointManager]::SecurityProtocol =
+    #     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
+    #     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+    #   args:
+    #     creates: 'C:\Program Files\PackageManagement\ProviderAssemblies\nuget'
 
-    - name: Trust the PSGallery repository
-      ansible.windows.win_shell: >-
-        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-      changed_when: false
+    # - name: Trust the PSGallery repository
+    #   ansible.windows.win_shell: >-
+    #     Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+    #   changed_when: false
 
-    - name: Install the SqlServer PowerShell module (provides Invoke-Sqlcmd)
-      ansible.windows.win_shell: >-
-        [Net.ServicePointManager]::SecurityProtocol =
-        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
-        if (-not (Get-Module -ListAvailable -Name SqlServer)) {
-        Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers;
-        Write-Output 'installed' }
-      register: sqlserver_module
-      changed_when: "'installed' in sqlserver_module.stdout"
+    # - name: Install the SqlServer PowerShell module (provides Invoke-Sqlcmd)
+    #   ansible.windows.win_shell: >-
+    #     [Net.ServicePointManager]::SecurityProtocol =
+    #     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
+    #     if (-not (Get-Module -ListAvailable -Name SqlServer)) {
+    #     Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers;
+    #     Write-Output 'installed' }
+    #   register: sqlserver_module
+    #   changed_when: "'installed' in sqlserver_module.stdout"
 
-    - name: Assert the SqlServer module is present on the VM
-      ansible.windows.win_shell: >-
-        if (Get-Module -ListAvailable -Name SqlServer) { Write-Output 'present' }
-        else { throw 'SqlServer module not found after install' }
-      register: sqlserver_present
-      changed_when: false
+    # - name: Assert the SqlServer module is present on the VM
+    #   ansible.windows.win_shell: >-
+    #     if (Get-Module -ListAvailable -Name SqlServer) { Write-Output 'present' }
+    #     else { throw 'SqlServer module not found after install' }
+    #   register: sqlserver_present
+    #   changed_when: false
 
     # =====================================================
     # READINESS CANARY — a freshly-installed engine can have TCP 1433 open while
@@ -304,17 +304,17 @@
     # server certificate; SQL Server's self-signed cert is untrusted, so every
     # Invoke-Sqlcmd needs -TrustServerCertificate.
     # =====================================================
-    - name: Wait until SQL Server accepts client logins
-      ansible.windows.win_shell: >-
-        Import-Module SqlServer;
-        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-        | Select-Object -ExpandProperty ok
-      register: sql_ready
-      changed_when: false
-      retries: 12
-      delay: 10
-      until: sql_ready is succeeded
+    # - name: Wait until SQL Server accepts client logins
+    #   ansible.windows.win_shell: >-
+    #     Import-Module SqlServer;
+    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+    #     | Select-Object -ExpandProperty ok
+    #   register: sql_ready
+    #   changed_when: false
+    #   retries: 12
+    #   delay: 10
+    #   until: sql_ready is succeeded
 
     # =====================================================
     # DEFAULT DATABASE FILE LOCATIONS — new databases/backups land in the
@@ -323,99 +323,99 @@
     # install + readiness canary (it uses Invoke-Sqlcmd). win_regedit and the
     # tempdb check are idempotent, so the restart only fires on first apply.
     # =====================================================
-    - name: Ensure the per-drive SQL default directories exist
-      ansible.windows.win_file:
-        path: "{{ item }}"
-        state: directory
-      loop: "{{ sql_drive_dirs }}"
+    # - name: Ensure the per-drive SQL default directories exist
+    #   ansible.windows.win_file:
+    #     path: "{{ item }}"
+    #     state: directory
+    #   loop: "{{ sql_drive_dirs }}"
 
-    - name: Grant the SQL admin and service account full control over the SQL folders
-      ansible.windows.win_acl:
-        path: "{{ item.0 }}"
-        user: "{{ item.1 }}"
-        rights: FullControl
-        type: allow
-        state: present
-        inherit: ContainerInherit, ObjectInherit
-        propagation: None
-      loop: "{{ sql_drive_dirs | product(sql_drive_acl_users) | list }}"
-      loop_control:
-        label: "{{ item.1 }} -> {{ item.0 }}"
+    # - name: Grant the SQL admin and service account full control over the SQL folders
+    #   ansible.windows.win_acl:
+    #     path: "{{ item.0 }}"
+    #     user: "{{ item.1 }}"
+    #     rights: FullControl
+    #     type: allow
+    #     state: present
+    #     inherit: ContainerInherit, ObjectInherit
+    #     propagation: None
+    #   loop: "{{ sql_drive_dirs | product(sql_drive_acl_users) | list }}"
+    #   loop_control:
+    #     label: "{{ item.1 }} -> {{ item.0 }}"
 
-    - name: Set SQL Server default data/log/backup directories
-      ansible.windows.win_regedit:
-        path: "{{ sql_instance_reg_path }}"
-        name: "{{ item.name }}"
-        data: "{{ item.data }}"
-        type: string
-      loop:
-        - { name: DefaultData, data: "{{ sql_default_data_dir }}" }
-        - { name: DefaultLog, data: "{{ sql_default_log_dir }}" }
-        - { name: BackupDirectory, data: "{{ sql_backup_dir }}" }
-      loop_control:
-        label: "{{ item.name }} -> {{ item.data }}"
-      register: sql_default_dirs
+    # - name: Set SQL Server default data/log/backup directories
+    #   ansible.windows.win_regedit:
+    #     path: "{{ sql_instance_reg_path }}"
+    #     name: "{{ item.name }}"
+    #     data: "{{ item.data }}"
+    #     type: string
+    #   loop:
+    #     - { name: DefaultData, data: "{{ sql_default_data_dir }}" }
+    #     - { name: DefaultLog, data: "{{ sql_default_log_dir }}" }
+    #     - { name: BackupDirectory, data: "{{ sql_backup_dir }}" }
+    #   loop_control:
+    #     label: "{{ item.name }} -> {{ item.data }}"
+    #   register: sql_default_dirs
 
-    - name: Point tempdb files at the dedicated tempdb drive
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = 'Stop'
-        Import-Module SqlServer
-        $target = '{{ sql_tempdb_dir }}'
-        $files = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-          -Query "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID('tempdb')"
-        foreach ($f in $files) {
-          if ((Split-Path $f.physical_name -Parent) -ne $target) {
-            $newPath = Join-Path $target (Split-Path $f.physical_name -Leaf)
-            Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-              -Query "ALTER DATABASE tempdb MODIFY FILE (NAME = N'$($f.name)', FILENAME = N'$newPath');"
-            Write-Output $f.physical_name   # emit the OLD path (one per line) for cleanup
-          }
-        }
-      register: tempdb_files
-      changed_when: "(tempdb_files.stdout | trim | length) > 0"
+    # - name: Point tempdb files at the dedicated tempdb drive
+    #   ansible.windows.win_shell: |
+    #     $ErrorActionPreference = 'Stop'
+    #     Import-Module SqlServer
+    #     $target = '{{ sql_tempdb_dir }}'
+    #     $files = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+    #       -Query "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID('tempdb')"
+    #     foreach ($f in $files) {
+    #       if ((Split-Path $f.physical_name -Parent) -ne $target) {
+    #         $newPath = Join-Path $target (Split-Path $f.physical_name -Leaf)
+    #         Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+    #           -Query "ALTER DATABASE tempdb MODIFY FILE (NAME = N'$($f.name)', FILENAME = N'$newPath');"
+    #         Write-Output $f.physical_name   # emit the OLD path (one per line) for cleanup
+    #       }
+    #     }
+    #   register: tempdb_files
+    #   changed_when: "(tempdb_files.stdout | trim | length) > 0"
 
-    # Restart only when the registry defaults or tempdb file paths actually
-    # changed (idempotent — skipped once converged). The ACL grants above ensure
-    # the engine service account can open tempdb at its new path, so the service
-    # comes back online instead of failing to start (per "Move system databases").
-    - name: Restart SQL Server to apply the new default directories
-      ansible.windows.win_service:
-        name: MSSQLSERVER
-        state: restarted
-      register: sql_restart
-      when: >-
-        (sql_default_dirs is defined and sql_default_dirs is changed)
-        or (tempdb_files is defined and tempdb_files is changed)
+    # # Restart only when the registry defaults or tempdb file paths actually
+    # # changed (idempotent — skipped once converged). The ACL grants above ensure
+    # # the engine service account can open tempdb at its new path, so the service
+    # # comes back online instead of failing to start (per "Move system databases").
+    # - name: Restart SQL Server to apply the new default directories
+    #   ansible.windows.win_service:
+    #     name: MSSQLSERVER
+    #     state: restarted
+    #   register: sql_restart
+    #   when: >-
+    #     (sql_default_dirs is defined and sql_default_dirs is changed)
+    #     or (tempdb_files is defined and tempdb_files is changed)
 
-    # Always confirm the engine is actually accepting logins before continuing —
-    # ungated so every deployment validates SQL is healthy (and a prior
-    # half-applied run surfaces here instead of failing cryptically later).
-    # changed_when:false keeps it idempotent.
-    - name: Verify SQL Server is online after applying file-location changes
-      ansible.windows.win_shell: >-
-        Import-Module SqlServer;
-        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-        | Select-Object -ExpandProperty ok
-      register: sql_ready_post
-      changed_when: false
-      retries: 18
-      delay: 10
-      until: sql_ready_post is succeeded
+    # # Always confirm the engine is actually accepting logins before continuing —
+    # # ungated so every deployment validates SQL is healthy (and a prior
+    # # half-applied run surfaces here instead of failing cryptically later).
+    # # changed_when:false keeps it idempotent.
+    # - name: Verify SQL Server is online after applying file-location changes
+    #   ansible.windows.win_shell: >-
+    #     Import-Module SqlServer;
+    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+    #     | Select-Object -ExpandProperty ok
+    #   register: sql_ready_post
+    #   changed_when: false
+    #   retries: 18
+    #   delay: 10
+    #   until: sql_ready_post is succeeded
 
-    # After the restart, tempdb is recreated on the new drive and SQL has released
-    # the old files — delete the now-orphaned tempdb files from the previous
-    # location. Guarded so it only runs when a move happened AND the engine is
-    # confirmed back online (so the old files are unlocked). Skipped on reruns.
-    - name: Remove the orphaned tempdb files from the previous location
-      ansible.windows.win_file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ (tempdb_files.stdout_lines | default([])) | map('trim') | reject('equalto', '') | list }}"
-      when:
-        - tempdb_files is defined
-        - tempdb_files is changed
-        - sql_ready_post is succeeded
+    # # After the restart, tempdb is recreated on the new drive and SQL has released
+    # # the old files — delete the now-orphaned tempdb files from the previous
+    # # location. Guarded so it only runs when a move happened AND the engine is
+    # # confirmed back online (so the old files are unlocked). Skipped on reruns.
+    # - name: Remove the orphaned tempdb files from the previous location
+    #   ansible.windows.win_file:
+    #     path: "{{ item }}"
+    #     state: absent
+    #   loop: "{{ (tempdb_files.stdout_lines | default([])) | map('trim') | reject('equalto', '') | list }}"
+    #   when:
+    #     - tempdb_files is defined
+    #     - tempdb_files is changed
+    #     - sql_ready_post is succeeded
 
     # =====================================================
     # ADD ENGINE FEATURES TO AN EXISTING INSTANCE (idempotent)
@@ -424,128 +424,128 @@
     # the setup media, re-acquired here if absent (the media section above is
     # skipped once the engine exists).
     # =====================================================
-    - name: Detect which optional engine features are installed
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = 'Stop'
-        Import-Module SqlServer
-        $ft = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-          -Query "SELECT CAST(SERVERPROPERTY('IsFullTextInstalled') AS int) AS v").v
-        $repl = 0
-        $rk = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\ConfigurationState'
-        if (Test-Path $rk) {
-          $p = Get-ItemProperty -Path $rk
-          if (($p.PSObject.Properties.Name -contains 'SQL_Replication_Core_Inst') -and $p.SQL_Replication_Core_Inst -eq 1) { $repl = 1 }
-        }
-        $missing = @()
-        if ($ft -ne 1)   { $missing += 'FULLTEXT' }
-        if ($repl -ne 1) { $missing += 'REPLICATION' }
-        ($missing -join ',')
-      register: missing_features
-      changed_when: false
+    # - name: Detect which optional engine features are installed
+    #   ansible.windows.win_shell: |
+    #     $ErrorActionPreference = 'Stop'
+    #     Import-Module SqlServer
+    #     $ft = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+    #       -Query "SELECT CAST(SERVERPROPERTY('IsFullTextInstalled') AS int) AS v").v
+    #     $repl = 0
+    #     $rk = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\ConfigurationState'
+    #     if (Test-Path $rk) {
+    #       $p = Get-ItemProperty -Path $rk
+    #       if (($p.PSObject.Properties.Name -contains 'SQL_Replication_Core_Inst') -and $p.SQL_Replication_Core_Inst -eq 1) { $repl = 1 }
+    #     }
+    #     $missing = @()
+    #     if ($ft -ne 1)   { $missing += 'FULLTEXT' }
+    #     if ($repl -ne 1) { $missing += 'REPLICATION' }
+    #     ($missing -join ',')
+    #   register: missing_features
+    #   changed_when: false
 
-    - name: Re-acquire setup media for the feature add (only when features are missing)
-      when: (missing_features.stdout | trim) | length > 0
-      block:
-        - name: Stat the extracted setup for the feature add
-          ansible.windows.win_stat:
-            path: "{{ sql_setup_path }}"
-          register: featadd_setup_stat
+    # - name: Re-acquire setup media for the feature add (only when features are missing)
+    #   when: (missing_features.stdout | trim) | length > 0
+    #   block:
+    #     - name: Stat the extracted setup for the feature add
+    #       ansible.windows.win_stat:
+    #         path: "{{ sql_setup_path }}"
+    #       register: featadd_setup_stat
 
-        - name: Download the bootstrapper for the feature add
-          ansible.windows.win_get_url:
-            url: "{{ sql_installer_url }}"
-            dest: "{{ sql_ssei_path }}"
-            force: false
-          when: not (featadd_setup_stat.stat.exists | default(false))
+    #     - name: Download the bootstrapper for the feature add
+    #       ansible.windows.win_get_url:
+    #         url: "{{ sql_installer_url }}"
+    #         dest: "{{ sql_ssei_path }}"
+    #         force: false
+    #       when: not (featadd_setup_stat.stat.exists | default(false))
 
-        - name: Download the media (CAB) for the feature add
-          ansible.windows.win_command: >-
-            "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-            /MEDIAPATH={{ sql_media_dir }} /QUIET
-          args:
-            creates: "{{ sql_box_exe }}"
-          when: not (featadd_setup_stat.stat.exists | default(false))
+    #     - name: Download the media (CAB) for the feature add
+    #       ansible.windows.win_command: >-
+    #         "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+    #         /MEDIAPATH={{ sql_media_dir }} /QUIET
+    #       args:
+    #         creates: "{{ sql_box_exe }}"
+    #       when: not (featadd_setup_stat.stat.exists | default(false))
 
-        - name: Extract the media for the feature add
-          ansible.windows.win_command: >-
-            "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
-          args:
-            creates: "{{ sql_setup_path }}"
-          when: not (featadd_setup_stat.stat.exists | default(false))
+    #     - name: Extract the media for the feature add
+    #       ansible.windows.win_command: >-
+    #         "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
+    #       args:
+    #         creates: "{{ sql_setup_path }}"
+    #       when: not (featadd_setup_stat.stat.exists | default(false))
 
-    - name: Add the missing engine features (Replication / Full-Text)
-      ansible.windows.win_command: >-
-        "{{ sql_setup_path }}" /Q /ACTION=Install
-        /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
-        /INSTANCENAME=MSSQLSERVER /FEATURES={{ missing_features.stdout | trim }}
-      register: feature_add
-      changed_when: feature_add.rc == 0
-      when: (missing_features.stdout | trim) | length > 0
+    # - name: Add the missing engine features (Replication / Full-Text)
+    #   ansible.windows.win_command: >-
+    #     "{{ sql_setup_path }}" /Q /ACTION=Install
+    #     /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
+    #     /INSTANCENAME=MSSQLSERVER /FEATURES={{ missing_features.stdout | trim }}
+    #   register: feature_add
+    #   changed_when: feature_add.rc == 0
+    #   when: (missing_features.stdout | trim) | length > 0
 
-    - name: Ensure the Full-Text filter daemon service is running and auto-start
-      ansible.windows.win_service:
-        name: MSSQLFDLauncher
-        state: started
-        start_mode: auto
-      failed_when: false   # service only exists once Full-Text is installed
+    # - name: Ensure the Full-Text filter daemon service is running and auto-start
+    #   ansible.windows.win_service:
+    #     name: MSSQLFDLauncher
+    #     state: started
+    #     start_mode: auto
+    #   failed_when: false   # service only exists once Full-Text is installed
 
     # =====================================================
     # INSTANT FILE INITIALIZATION (the "Perform Volume Maintenance Task" checkbox)
     # Grant SeManageVolumePrivilege to the engine service account; effective after
     # a restart. Idempotent (win_user_right add-only); restart only when granted.
     # =====================================================
-    - name: Grant Perform Volume Maintenance Task to the SQL service (Instant File Init)
-      ansible.windows.win_user_right:
-        name: SeManageVolumePrivilege
-        users:
-          - 'NT SERVICE\MSSQLSERVER'
-        action: add
-      register: ifi_right
+    # - name: Grant Perform Volume Maintenance Task to the SQL service (Instant File Init)
+    #   ansible.windows.win_user_right:
+    #     name: SeManageVolumePrivilege
+    #     users:
+    #       - 'NT SERVICE\MSSQLSERVER'
+    #     action: add
+    #   register: ifi_right
 
-    - name: Restart SQL Server to apply Instant File Initialization
-      ansible.windows.win_service:
-        name: MSSQLSERVER
-        state: restarted
-      when: ifi_right is changed
+    # - name: Restart SQL Server to apply Instant File Initialization
+    #   ansible.windows.win_service:
+    #     name: MSSQLSERVER
+    #     state: restarted
+    #   when: ifi_right is changed
 
-    - name: Verify SQL Server is online after the IFI restart
-      ansible.windows.win_shell: >-
-        Import-Module SqlServer;
-        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-        | Select-Object -ExpandProperty ok
-      register: ifi_ready
-      changed_when: false
-      retries: 18
-      delay: 10
-      until: ifi_ready is succeeded
-      when: ifi_right is changed
+    # - name: Verify SQL Server is online after the IFI restart
+    #   ansible.windows.win_shell: >-
+    #     Import-Module SqlServer;
+    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+    #     | Select-Object -ExpandProperty ok
+    #   register: ifi_ready
+    #   changed_when: false
+    #   retries: 18
+    #   delay: 10
+    #   until: ifi_ready is succeeded
+    #   when: ifi_right is changed
 
     # =====================================================
     # MAXDOP + COST THRESHOLD FOR PARALLELISM (best practice, idempotent)
     # MaxDOP = min(8, logical CPUs); cost threshold = 50. Only RECONFIGUREs on drift.
     # =====================================================
-    - name: Apply MaxDOP and cost threshold for parallelism
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = 'Stop'
-        Import-Module SqlServer
-        $changed = $false
-        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'show advanced options',1; RECONFIGURE;" | Out-Null
-        $cpu = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT cpu_count AS c FROM sys.dm_os_sys_info").c
-        $maxdop = [Math]::Min(8, [int]$cpu)
-        $curMaxdop = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'max degree of parallelism'").v
-        if ([int]$curMaxdop -ne $maxdop) {
-          Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'max degree of parallelism', $maxdop; RECONFIGURE;" | Out-Null
-          $changed = $true
-        }
-        $curCost = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'cost threshold for parallelism'").v
-        if ([int]$curCost -ne 50) {
-          Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'cost threshold for parallelism', 50; RECONFIGURE;" | Out-Null
-          $changed = $true
-        }
-        if ($changed) { Write-Output 'CHANGED' } else { Write-Output 'OK' }
-      register: maxdop_result
-      changed_when: "'CHANGED' in maxdop_result.stdout"
+    # - name: Apply MaxDOP and cost threshold for parallelism
+    #   ansible.windows.win_shell: |
+    #     $ErrorActionPreference = 'Stop'
+    #     Import-Module SqlServer
+    #     $changed = $false
+    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'show advanced options',1; RECONFIGURE;" | Out-Null
+    #     $cpu = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT cpu_count AS c FROM sys.dm_os_sys_info").c
+    #     $maxdop = [Math]::Min(8, [int]$cpu)
+    #     $curMaxdop = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'max degree of parallelism'").v
+    #     if ([int]$curMaxdop -ne $maxdop) {
+    #       Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'max degree of parallelism', $maxdop; RECONFIGURE;" | Out-Null
+    #       $changed = $true
+    #     }
+    #     $curCost = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'cost threshold for parallelism'").v
+    #     if ([int]$curCost -ne 50) {
+    #       Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'cost threshold for parallelism', 50; RECONFIGURE;" | Out-Null
+    #       $changed = $true
+    #     }
+    #     if ($changed) { Write-Output 'CHANGED' } else { Write-Output 'OK' }
+    #   register: maxdop_result
+    #   changed_when: "'CHANGED' in maxdop_result.stdout"
 
     # =====================================================
     # AUTOGROWTH BEST PRACTICE (idempotent) — fixed 256 MB on model + tempdb so new
