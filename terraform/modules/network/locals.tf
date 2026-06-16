@@ -38,6 +38,18 @@ locals {
       target_nsgs = ["dev-vnet-app-subnet"]
     }
 
+    # Mirrors test-env network.sh "Allow-WinRM-HTTPS"; pairs with the host-side
+    # HTTPS listener provisioned by the vm module's enable-winrm extension.
+    winrm_https = {
+      name        = "Allow-WinRM-HTTPS"
+      port        = 5986
+      priority    = 111
+      direction   = "Inbound"
+      source      = "client_ip"
+      destination = "app_subnet"
+      target_nsgs = ["dev-vnet-app-subnet"]
+    }
+
     rdp = {
       name        = "Allow-RDP"
       port        = 3389

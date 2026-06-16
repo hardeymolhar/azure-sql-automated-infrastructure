@@ -109,6 +109,22 @@ resource "azurerm_windows_virtual_machine" "db_vm" {
 
 
 
+# =========================================================
+# WINRM FOR ANSIBLE
+# ---------------------------------------------------------
+# Context  — Ansible manages this Windows VM over WinRM, and the test-env flow
+#            now connects over the HTTPS (5986) listener rather than 5985/HTTP.
+# Decision — open BOTH 5985 and 5986 at the host firewall (each restricted to
+#            var.client_ip) and provision a self-signed-cert WinRM HTTPS listener
+#            (CN = the VM computer name), mirroring the test-env run-command. The
+#            paired NSG rule lives in the network module (Allow-WinRM-HTTPS, 5986).
+# Rationale — Windows Server 2019 ships a 5985/HTTP listener by default but no
+#            HTTPS listener; HTTPS wraps the NTLM session in TLS end-to-end. The
+#            cert is self-signed, so the inventory must use
+#            ansible_winrm_server_cert_validation=ignore (no CA/PKI in the sandbox).
+#            The prior HTTPS listener is removed before re-creating it, so the
+#            CustomScriptExtension stays idempotent across re-runs.
+# =========================================================
 resource "azurerm_virtual_machine_extension" "winrm" {
   name                 = "enable-winrm"
   virtual_machine_id   = azurerm_windows_virtual_machine.db_vm[0].id
@@ -118,7 +134,7 @@ resource "azurerm_virtual_machine_extension" "winrm" {
 
   settings = jsonencode({
     commandToExecute = <<EOT
-  powershell -ExecutionPolicy Bypass -Command "$ruleName = 'WinRM-Restricted-Custom'; $ip = '${var.client_ip}/32'; Start-Sleep -Seconds 30; if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -RemoteAddress $ip -Profile Any } else { Set-NetFirewallRule -DisplayName $ruleName -Enabled True; Get-NetFirewallRule -DisplayName $ruleName | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress $ip }"
+  powershell -ExecutionPolicy Bypass -Command "$httpRule = 'WinRM-Restricted-Custom'; $httpsRule = 'WinRM-HTTPS-Restricted-Custom'; $ip = '${var.client_ip}/32'; Start-Sleep -Seconds 30; if (-not (Get-NetFirewallRule -DisplayName $httpRule -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $httpRule -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -RemoteAddress $ip -Profile Any } else { Set-NetFirewallRule -DisplayName $httpRule -Enabled True; Get-NetFirewallRule -DisplayName $httpRule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress $ip }; if (-not (Get-NetFirewallRule -DisplayName $httpsRule -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName $httpsRule -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow -RemoteAddress $ip -Profile Any } else { Set-NetFirewallRule -DisplayName $httpsRule -Enabled True; Get-NetFirewallRule -DisplayName $httpsRule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress $ip }; $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My; Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -match 'Transport=HTTPS' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -HostName $env:COMPUTERNAME -CertificateThumbPrint $cert.Thumbprint -Force; Restart-Service -Name WinRM"
   EOT
   })
 
