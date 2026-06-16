@@ -7,6 +7,22 @@
 ![Ansible](https://img.shields.io/badge/Ansible-Automation-red)
 ![Dotnet](https://img.shields.io/badge/.NET-8.0-512BD4)
 
+## 📚 Detailed Documentation
+
+This README is a guided tour of the **managed (PaaS)** track. The platform is delivered along
+**two parallel architecture tracks**, each with a full deep-dive write-up (Context → Decision →
+Rationale → Alternatives → Consequences, with Mermaid diagrams). If you want the in-to-in
+reasoning behind a track — not just what it does, but *why it is shaped this way* — start here:
+
+| Track | Deep-dive | What it covers |
+|---|---|---|
+| **PaaS — Azure SQL Database** | [docs/paas-database.md](docs/paas-database.md) | Managed HA/DR via **Failover Groups + Active Geo-Replication**, **Private Endpoints**, **TDE with CMK in Key Vault**, Always Encrypted, DDM, auditing, and Managed Identity. |
+| **IaaS — SQL Server on Azure VMs** | [docs/sql-server-on-vms-architecture.md](docs/sql-server-on-vms-architecture.md) | Self-managed **SQL Server 2022 on Windows VMs** made HA with **Always On Availability Groups** across two availability zones, fronted by an internal load balancer listener, with private access and customer-managed disk encryption. |
+
+The two tracks solve the same problem — secure, highly available banking-grade SQL — from opposite
+ends of the managed/self-managed spectrum, and the docs make that trade-off explicit. The sections
+below walk through the **PaaS** track in detail.
+
 ## 🔴 Problem Overview
 
 In banking and fintech payment systems, a database outage is not just a technical incident; it is a
@@ -336,7 +352,49 @@ The .NET implementation became the primary workload engine because the official 
 
 | Directory | Purpose |
 |---|---|
-| [`./scripts/dotnet/`](./scripts/dotnet/) | Always Encrypted validation and secure workload simulation |
+| [`./scripts/dotnet/`](./scripts/dotnet/) | Simulates controlled Azure SQL workloads with Always Encrypted support for monitoring, observability, and performance analysis |
+
+
+### TradeOffs
+
+Why This Approach Was Used
+
+The environment was intentionally constrained to:
+
+* a 5 DTU Basic Azure SQL Database
+* sandbox-style resource limits
+* restricted scaling capability
+
+Under these constraints, aggressive workloads quickly exhausted DTU capacity and caused:
+
+* throttling
+* failed transactions
+* unstable sessions
+* unusable monitoring signals
+
+Because of this, a controlled sustained workload was chosen instead of a high-pressure stress test.
+
+``` mermaid
+flowchart LR
+
+    A[Start Workload] --> B[Open SQL Connection]
+
+    B --> C[Insert Small Batch]
+
+    C --> D[Commit Transaction]
+
+    D --> E[Pause Briefly]
+
+    E --> F[Run Lightweight SELECT Query]
+
+    F --> G[Pause Again]
+
+    G --> H{More Cycles Remaining?}
+
+    H -- Yes --> C
+
+    H -- No --> I[End Workload]
+```
 
 
 
@@ -481,6 +539,37 @@ Because of the sandbox restrictions:
 | Workload Simulation | .NET |
 
 
+
+---
+
+## Configuration-Management Connectivity — Public-IP Ansible vs. VPN + In-VNet Control Node
+
+Azure SQL and Key Vault are reachable only **privately** (Private Endpoints + private DNS). The open
+question is the **management plane**: how does Ansible reach the workload VM to configure it?
+
+**Context** — In production, the VM would carry **no public IP**. Humans would reach it only through
+**Azure Bastion** (private RDP/SSH), and Ansible would run from a **control node inside the VNet**
+(a jump host or self-hosted runner) that targets the VM by its **private IP**, with operator/CI
+access into the VNet provided by a **VPN gateway or ExpressRoute**.
+
+**Decision** — In the time-boxed sandbox, the VM keeps an **allowlisted public IP** and Ansible runs
+**over the public internet** (WinRM 5985/NTLM on Windows, SSH on Linux), with the NSG scoping the
+management ports to the operator's `/32`. No VPN gateway and no in-VNet control node are deployed.
+
+**Rationale** — A VPN gateway plus an in-VNet runner adds real deploy/teardown time and cost on every
+ephemeral sandbox cycle without changing the *configuration outcome*. The allowlisted public IP
+reaches the same end state in minutes. **Getting reproducible results was preferred over reproducing
+the full production network topology.**
+
+**Not a Private Link limitation.** This is a **cost/time** trade-off, not an architectural one. A
+Private Endpoint secures a **PaaS service** (SQL, Key Vault) — a VM does not have a private endpoint —
+and an allowlisted **public management IP on the VM coexists with Private Endpoints on SQL/Key Vault**.
+This repository runs exactly that combination.
+
+**Consequences & hardening path** — Faster, reproducible automation, in exchange for a **publicly
+exposed (allowlisted) management plane**. To productionize: remove the VM's public IP and run Ansible
+from an **in-VNet control node over a Bastion tunnel or VPN/ExpressRoute**, so the management plane
+becomes as private as the data plane.
 
 ---
 
