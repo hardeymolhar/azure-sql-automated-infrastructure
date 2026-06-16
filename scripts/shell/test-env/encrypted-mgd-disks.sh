@@ -47,16 +47,16 @@ az disk create \
   --resource-group $RESOURCE_GROUP \
   --name $DATA_DISK \
   --location $LOCATION \
-  --size-gb 4096 \
-  --sku StandardSSD_LRS \
+  --size-gb 4028 \
+  --sku StandardSSD_ZRS \
   --disk-encryption-set "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Compute/diskEncryptionSets/$DES_NAME"
 
 az disk create \
   --resource-group $RESOURCE_GROUP \
   --name $LOG_DISK \
   --location $LOCATION \
-  --size-gb 4096 \
-  --sku StandardSSD_LRS \
+  --size-gb 2048 \
+  --sku StandardSSD_ZRS \
   --disk-encryption-set "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Compute/diskEncryptionSets/$DES_NAME"
 
 
@@ -64,8 +64,8 @@ az disk create \
   --resource-group $RESOURCE_GROUP \
   --name $TEMP_DISK \
   --location $LOCATION \
-  --size-gb 4096 \
-  --sku StandardSSD_LRS \
+  --size-gb 1024 \
+  --sku StandardSSD_ZRS \
   --disk-encryption-set "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Compute/diskEncryptionSets/$DES_NAME"
 
 
@@ -74,7 +74,7 @@ az disk create \
   --name $BACKUP_DISK \
   --location $LOCATION \
   --size-gb 4096 \
-  --sku StandardSSD_LRS \
+  --sku StandardSSD_ZRS \
   --disk-encryption-set "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Compute/diskEncryptionSets/$DES_NAME"       
 
 
