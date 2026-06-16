@@ -20,120 +20,6 @@ SSH_PUBLIC_KEY=$(az keyvault secret show \
   -o tsv)
 
 
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-
-resource_exists() {
-  local resource_check_command="$1"
-
-  if eval "$resource_check_command" >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# =========================================================
-# CREATE VNET
-# =========================================================
-
-if resource_exists "az network vnet show --resource-group $RESOURCE_GROUP --name $VNET_NAME"; then
-  echo -e "${YELLOW}VNET already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating VNET...${NC}"
-
-  az network vnet create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$VNET_NAME" \
-    --subnet-name "$SUBNET_NAME" \
-    --subnet-prefixes 10.10.1.0/24
-fi
-
-
-# =========================================================
-# ENABLE SERVICE ENDPOINTS
-# =========================================================
-
-echo -e "${BLUE}Configuring subnet service endpoints...${NC}"
-
-az network vnet subnet update \
-  --resource-group "$RESOURCE_GROUP" \
-  --vnet-name "$VNET_NAME" \
-  --name "$SUBNET_NAME" \
-  --service-endpoints Microsoft.Storage Microsoft.KeyVault Microsoft.Sql
-
-# =========================================================
-# CREATE NSG
-# =========================================================
-
-if resource_exists "az network nsg show --resource-group $RESOURCE_GROUP --name $NSG_NAME"; then
-  echo -e "${YELLOW}NSG already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating NSG...${NC}"
-
-  az network nsg create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$NSG_NAME"
-fi
-
-# =========================================================
-# ALLOW SSH ONLY FROM CLIENT IP
-# =========================================================
-
-if resource_exists "az network nsg rule show --resource-group $RESOURCE_GROUP --nsg-name $NSG_NAME --name Allow-SSH-Client-IP"; then
-  echo -e "${YELLOW}NSG rule already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating NSG rule for SSH access...${NC}"
-
-  az network nsg rule create \
-    --resource-group "$RESOURCE_GROUP" \
-    --nsg-name "$NSG_NAME" \
-    --name "Allow-SSH-Client-IP" \
-    --priority 1000 \
-    --direction Inbound \
-    --access Allow \
-    --protocol Tcp \
-    --source-address-prefixes "$CLIENT_IP" \
-    --source-port-ranges "*" \
-    --destination-port-ranges 22
-fi
-
-# =========================================================
-# CREATE PUBLIC IP
-# =========================================================
-
-if resource_exists "az network public-ip show --resource-group $RESOURCE_GROUP --name $PUBLIC_IP_NAME"; then
-  echo -e "${YELLOW}Public IP already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating Public IP...${NC}"
-
-  az network public-ip create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$PUBLIC_IP_NAME" \
-    --sku Standard
-fi
-
-# =========================================================
-# CREATE NIC
-# =========================================================
-
-if resource_exists "az network nic show --resource-group $RESOURCE_GROUP --name $NIC_NAME"; then
-  echo -e "${YELLOW}NIC already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating NIC...${NC}"
-
-  az network nic create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$NIC_NAME" \
-    --vnet-name "$VNET_NAME" \
-    --subnet "$SUBNET_NAME" \
-    --network-security-group "$NSG_NAME" \
-    --public-ip-address "$PUBLIC_IP_NAME"
-fi
 
 # =========================================================
 # CREATE VM
@@ -185,8 +71,9 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --vm-name "$VM_NAME" \
     --ids "$DATA_DISK_ID" \
-    --lun 0
-
+    --lun 0 \
+    --caching None
+    
   echo -e "${GREEN}DATA disk attached successfully.${NC}"
 fi
 
@@ -215,7 +102,8 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --vm-name "$VM_NAME" \
     --name "$LOG_DISK" \
-    --lun 1
+    --lun 1 \
+    --caching None
 
   echo -e "${GREEN}LOG disk attached successfully.${NC}"
 fi
@@ -246,7 +134,8 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --vm-name "$VM_NAME" \
     --name "$TEMP_DISK" \
-    --lun 2
+    --lun 2 \
+    --caching None
 
   echo -e "${GREEN}TEMP disk attached successfully.${NC}"
 fi
@@ -277,7 +166,8 @@ else
     --resource-group "$RESOURCE_GROUP" \
     --vm-name "$VM_NAME" \
     --name "$BACKUP_DISK" \
-    --lun 3
+    --lun 3 \
+    --caching None
 
   echo -e "${GREEN}BACKUP disk attached successfully.${NC}"
 fi

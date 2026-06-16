@@ -26,120 +26,7 @@ resource_exists() {
   fi
 }
 
-# =========================================================
-# ENSURE VNET / SUBNET EXIST
-# =========================================================
 
-if resource_exists "az network vnet show --resource-group $RESOURCE_GROUP --name $VNET_NAME"; then
-  echo -e "${YELLOW}VNET already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating VNET...${NC}"
-
-  az network vnet create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$VNET_NAME" \
-    --subnet-name "$SUBNET_NAME" \
-    --subnet-prefixes 10.10.1.0/24
-fi
-
-if resource_exists "az network vnet subnet show --resource-group $RESOURCE_GROUP --name "WindowsSubnet""; then
-  echo -e "${YELLOW}Subnet  already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating Subnet...${NC}"
-az network vnet subnet create \
-    --resource-group "$RESOURCE_GROUP" \
-    --vnet-name "$VNET_NAME" \
-    --name "WindowsSubnet" \
-    --address-prefixes "10.10.2.0/24"
-
-  fi
-
-# =========================================================
-# CREATE NSG
-# =========================================================
-
-if resource_exists "az network nsg show --resource-group $RESOURCE_GROUP --name $WIN_NSG_NAME"; then
-  echo -e "${YELLOW}Windows NSG already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating Windows NSG...${NC}"
-
-  az network nsg create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$WIN_NSG_NAME"
-fi
-
-
-
-
-
-# =========================================================
-# NSG RULES (all scoped to the workstation client IP)
-#   3389 -> RDP, 5985 -> WinRM (Ansible), 1433 -> SQL Server
-# =========================================================
-
-create_nsg_rule() {
-  local rule_name="$1"
-  local priority="$2"
-  local port="$3"
-
-  if resource_exists "az network nsg rule show --resource-group $RESOURCE_GROUP --nsg-name $WIN_NSG_NAME --name $rule_name"; then
-    echo -e "${YELLOW}NSG rule $rule_name already exists. Skipping...${NC}"
-  else
-    echo -e "${BLUE}Creating NSG rule $rule_name (port $port)...${NC}"
-
-    az network nsg rule create \
-      --resource-group "$RESOURCE_GROUP" \
-      --nsg-name "$WIN_NSG_NAME" \
-      --name "$rule_name" \
-      --priority "$priority" \
-      --direction Inbound \
-      --access Allow \
-      --protocol Tcp \
-      --source-address-prefixes "$CLIENT_IP" \
-      --source-port-ranges "*" \
-      --destination-port-ranges "$port"
-  fi
-}
-
-create_nsg_rule "Allow-RDP-Client-IP" 1000 3389
-create_nsg_rule "Allow-WinRM-Client-IP" 1010 "$WIN_WINRM_PORT"
-create_nsg_rule "Allow-SQL-Client-IP" 1020 1433
-
-# =========================================================
-# CREATE PUBLIC IP
-# =========================================================
-
-if resource_exists "az network public-ip show --resource-group $RESOURCE_GROUP --name $WIN_PUBLIC_IP_NAME"; then
-  echo -e "${YELLOW}Public IP already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating Public IP...${NC}"
-
-  az network public-ip create \
-    --resource-group "$RESOURCE_GROUP" \
-    --location "$LOCATION" \
-    --name "$WIN_PUBLIC_IP_NAME" \
-    --sku Standard
-fi
-
-# =========================================================
-# CREATE NIC
-# =========================================================
-
-if resource_exists "az network nic show --resource-group $RESOURCE_GROUP --name $WIN_NIC_NAME"; then
-  echo -e "${YELLOW}NIC already exists. Skipping creation...${NC}"
-else
-  echo -e "${BLUE}Creating NIC...${NC}"
-
-  az network nic create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$WIN_NIC_NAME" \
-    --vnet-name "$VNET_NAME" \
-    --subnet "$SUBNET_NAME" \
-    --network-security-group "$WIN_NSG_NAME" \
-    --public-ip-address "$WIN_PUBLIC_IP_NAME"
-fi
 
 # =========================================================
 # CREATE WINDOWS SQL VM
@@ -161,18 +48,20 @@ else
     --admin-username "$ADMIN_USERNAME" \
     --admin-password "$ADMIN_PASSWORD" \
     --os-disk-name "$WIN_OS_DISK" \
-    --storage-sku StandardSSD_LRS \
+    --storage-sku StandardSSD_ZRS \
     --assign-identity
 fi
 
 # =========================================================
 # ENABLE WINRM FOR ANSIBLE
 # ---------------------------------------------------------
-# Ansible manages Windows over WinRM. We enable the HTTP (5985)
-# listener and use NTLM/Negotiate from the inventory, which
-# encrypts the payload over HTTP. This is a sandbox-grade setup;
-# a production host should use the HTTPS (5986) listener with a
-# proper certificate instead.
+# Ansible manages Windows over WinRM. We open BOTH listener ports at the host
+# firewall (5985/HTTP and 5986/HTTPS) but Ansible connects over the HTTPS (5986)
+# listener, which wraps the NTLM/Negotiate session in TLS end-to-end rather than
+# relying on message-level encryption over plaintext HTTP. A self-signed cert
+# (CN = the VM computer name) backs the listener; the inventory sets
+# ansible_winrm_server_cert_validation=ignore, so no CA/PKI is required in the
+# sandbox. The 5985/HTTP listener stays enabled as a fallback.
 #
 # Order/flags matter (per Microsoft docs):
 #  - Set the connection profile to Private BEFORE Enable-PSRemoting, and pass
@@ -183,6 +72,10 @@ fi
 #    RemoteAddress=Any (the documented fix) — the NSG still limits exposure to
 #    CLIENT_IP. Each --scripts string is one line of a single PowerShell script
 #    run as SYSTEM on the VM.
+#  - The HTTPS listener needs a server cert: New-SelfSignedCertificate creates one
+#    and we bind it to a fresh WSMan HTTPS listener, removing any prior HTTPS
+#    listener first so the run-command stays re-runnable (re-creating an existing
+#    Address=*+Transport=HTTPS listener otherwise errors).
 # =========================================================
 
 echo -e "${BLUE}Enabling WinRM on the VM for Ansible...${NC}"
@@ -197,7 +90,11 @@ az vm run-command invoke \
     "Set-Service -Name WinRM -StartupType Automatic" \
     "Start-Service -Name WinRM" \
     "Set-Item -Path WSMan:\\localhost\\Service\\Auth\\Negotiate -Value \$true -Force" \
+    "\$winrmCert = New-SelfSignedCertificate -DnsName \$env:COMPUTERNAME -CertStoreLocation Cert:\\LocalMachine\\My" \
+    "Get-ChildItem WSMan:\\localhost\\Listener | Where-Object { \$_.Keys -match 'Transport=HTTPS' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue" \
+    "New-Item -Path WSMan:\\localhost\\Listener -Transport HTTPS -Address * -HostName \$env:COMPUTERNAME -CertificateThumbPrint \$winrmCert.Thumbprint -Force" \
     "New-NetFirewallRule -DisplayName 'WinRM-HTTP-In-Ansible' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -Profile Any -RemoteAddress Any -ErrorAction SilentlyContinue" \
+    "New-NetFirewallRule -DisplayName 'WinRM-HTTPS-In-Ansible' -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow -Profile Any -RemoteAddress Any -ErrorAction SilentlyContinue" \
     "Set-NetFirewallRule -Name 'WINRM-HTTP-In-TCP-PUBLIC' -RemoteAddress Any -ErrorAction SilentlyContinue" \
     "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force" \
     "Restart-Service -Name WinRM"
@@ -223,7 +120,7 @@ echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}VM Name:${NC}    $WIN_VM_NAME"
 echo -e "${GREEN}Public IP:${NC}  $VM_PUBLIC_IP"
 echo ""
-echo -e "${GREEN}Next:${NC} run vm-config.sh to apply the Ansible SQL configuration."
+echo -e "${GREEN}Next:${NC} run vm-stg-ind-110.sh to apply the Ansible SQL configuration."
 echo -e "${GREEN}RDP:${NC}  mstsc /v:$VM_PUBLIC_IP   (user: $ADMIN_USERNAME)"
 echo -e "${GREEN}SQL:${NC}  sqlcmd -S $VM_PUBLIC_IP,1433 -U $SQL_LOGIN -P '<password>' -Q 'SELECT @@VERSION'"
 echo -e "${GREEN}==========================================${NC}"

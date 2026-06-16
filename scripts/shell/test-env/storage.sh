@@ -96,56 +96,56 @@ az storage account update \
 
 # CHECK VNET
 
-# =========================================================
+# # =========================================================
 
-echo "=================================================="
+# echo "=================================================="
 
-echo "CHECK VNET"
+# echo "CHECK VNET"
 
-echo "=================================================="
+# echo "=================================================="
 
-if az network vnet show \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$VNET_NAME" \
-    >/dev/null 2>&1; then
+# if az network vnet show \
+#     --resource-group "$RESOURCE_GROUP" \
+#     --name "$VNET_NAME" \
+#     >/dev/null 2>&1; then
 
-    echo "VNet exists."
+#     echo "VNet exists."
 
-else
+# else
 
-    echo "ERROR: VNet does not exist."
+#     echo "ERROR: VNet does not exist."
 
-    exit 1
+#     exit 1
 
-fi
+# fi
 
-# =========================================================
+# # =========================================================
 
-# CHECK SUBNET
+# # CHECK SUBNET
 
-# =========================================================
+# # =========================================================
 
-echo "=================================================="
+# echo "=================================================="
 
-echo "CHECK SUBNET"
+# echo "CHECK SUBNET"
 
-echo "=================================================="
+# echo "=================================================="
 
-if az network vnet subnet show \
-    --resource-group "$RESOURCE_GROUP" \
-    --vnet-name "$VNET_NAME" \
-    --name "$SUBNET_NAME" \
-    >/dev/null 2>&1; then
+# if az network vnet subnet show \
+#     --resource-group "$RESOURCE_GROUP" \
+#     --vnet-name "$VNET_NAME" \
+#     --name "$SUBNET_NAME" \
+#     >/dev/null 2>&1; then
 
-    echo "Subnet exists."
+#     echo "Subnet exists."
 
-else
+# else
 
-    echo "ERROR: Subnet does not exist."
+#     echo "ERROR: Subnet does not exist."
 
-    exit 1
+#     exit 1
 
-fi
+# fi
 
 # =========================================================
 
@@ -188,37 +188,37 @@ fi
 
 # =========================================================
 
-echo "=================================================="
+# echo "=================================================="
 
-echo "CHECK VNET RULE"
+# echo "CHECK VNET RULE"
 
-echo "=================================================="
+# echo "=================================================="
 
-existing_vnet_rule=$(
+# existing_vnet_rule=$(
 
-    az storage account network-rule list \
-        --resource-group "$RESOURCE_GROUP" \
-        --account-name "$STORAGE_ACCOUNT_NAME" \
-        --query "virtualNetworkRules[?contains(virtualNetworkResourceId, '$SUBNET_NAME')]" \
-        -o tsv
+#     az storage account network-rule list \
+#         --resource-group "$RESOURCE_GROUP" \
+#         --account-name "$STORAGE_ACCOUNT_NAME" \
+#         --query "virtualNetworkRules[?contains(virtualNetworkResourceId, '$SUBNET_NAME')]" \
+#         -o tsv
 
-)
+# )
 
-if [ -n "$existing_vnet_rule" ]; then
+# if [ -n "$existing_vnet_rule" ]; then
 
-    echo "VNet rule already exists."
+#     echo "VNet rule already exists."
 
-else
+# else
 
-    echo "Adding VNet rule..."
+#     echo "Adding VNet rule..."
 
-    az storage account network-rule add \
-        --resource-group "$RESOURCE_GROUP" \
-        --account-name "$STORAGE_ACCOUNT_NAME" \
-        --vnet-name "$VNET_NAME" \
-        --subnet "$SUBNET_NAME"
+#     az storage account network-rule add \
+#         --resource-group "$RESOURCE_GROUP" \
+#         --account-name "$STORAGE_ACCOUNT_NAME" \
+#         --vnet-name "$VNET_NAME" \
+#         --subnet "$SUBNET_NAME"
 
-fi
+# fi
 
 # =========================================================
 
