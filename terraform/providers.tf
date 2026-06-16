@@ -8,7 +8,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0.0" # Use a stable Azure provider version
+      version = "4.75.0" # 4.x; upgrade version to the latest 4.x release when possible for new features and fixes
     }
     http = {
       source  = "hashicorp/http"
