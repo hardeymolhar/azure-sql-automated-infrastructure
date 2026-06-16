@@ -63,10 +63,20 @@
           if ($d.Index -eq 0) { continue }
           if ($tempDiskNumbers -contains $d.Index) { continue }
           $disk = Get-Disk -Number $d.Index
+          # Track formatting at the VOLUME level, not the disk level: a disk can
+          # be GPT-initialized + partitioned yet have NO filesystem (a run that
+          # broke between win_partition and win_format) -- Explorer shows it as
+          # an inaccessible "Local Disk" with no capacity bar.
+          $ntfs = @(
+            $disk | Get-Partition -ErrorAction SilentlyContinue |
+              Get-Volume -ErrorAction SilentlyContinue |
+              Where-Object { $_.FileSystem -eq 'NTFS' }
+          )
           [pscustomobject]@{
-            lun    = [int]$d.SCSILogicalUnit
-            number = [int]$d.Index
-            raw    = ($disk.PartitionStyle -eq 'RAW')
+            lun       = [int]$d.SCSILogicalUnit
+            number    = [int]$d.Index
+            raw       = ($disk.PartitionStyle -eq 'RAW')  # needs init+partition
+            formatted = ($ntfs.Count -gt 0)               # has NTFS volume
           }
         }
         ConvertTo-Json @($result) -Compress
@@ -94,8 +104,12 @@
 
     # =====================================================
     # INITIALIZE -> PARTITION -> FORMAT
-    # Only act on RAW disks unless force_wipe is set, so re-runs are idempotent
-    # and existing data is never reformatted by accident.
+    # Each step is guarded so re-runs are idempotent and existing data is never
+    # reformatted by accident:
+    #   - initialize/partition: only RAW disks (not yet GPT) — or force_wipe.
+    #   - format: any disk whose volume is NOT yet NTFS — this recovers a disk
+    #     that was partitioned but left unformatted (e.g. a previous run that
+    #     dropped its network connection mid-way) without manual intervention.
     # =====================================================
     - name: Initialize raw disks (GPT)
       community.windows.win_initialize_disk:
@@ -128,7 +142,7 @@
       loop: "{{ win_disks }}"
       loop_control:
         label: "{{ item.drive_letter }}: ({{ item.label }})"
-      when: item.raw | bool or force_wipe | bool
+      when: not (item.formatted | bool) or force_wipe | bool
 
     # =====================================================
     # SQL DIRECTORY STRUCTURE
