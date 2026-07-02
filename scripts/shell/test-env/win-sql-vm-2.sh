@@ -47,7 +47,7 @@ else
     --name "$WIN_VM_NAME_2" \
     --nics "$WIN_NIC_NAME_2" \
     --image "$WIN_IMAGE" \
-    --size "$WIN_VM_SIZE" \
+    --size "$WIN_VM_SIZE_2" \
     --admin-username "$ADMIN_USERNAME" \
     --admin-password "$ADMIN_PASSWORD" \
     --os-disk-name "$WIN_OS_DISK_2" \
@@ -112,7 +112,7 @@ echo -e "${GREEN}Zone:${NC}       $WIN_VM_ZONE_2"
 echo -e "${GREEN}Public IP:${NC}  $VM_PUBLIC_IP"
 echo ""
 echo -e "${GREEN}Next:${NC} run win-encrypted-disks-2.sh to attach its encrypted disks,"
-echo -e "      then vm-stg-ind-110.sh to apply the Ansible SQL configuration."
+echo -e "      then vm-stg-ind-103.sh to apply the Ansible SQL configuration."
 echo -e "${GREEN}RDP:${NC}  mstsc /v:$VM_PUBLIC_IP   (user: $ADMIN_USERNAME)"
 echo -e "${GREEN}SQL:${NC}  sqlcmd -S $VM_PUBLIC_IP,1433 -U $SQL_LOGIN -P '<password>' -Q 'SELECT @@VERSION'"
 echo -e "${GREEN}==========================================${NC}"

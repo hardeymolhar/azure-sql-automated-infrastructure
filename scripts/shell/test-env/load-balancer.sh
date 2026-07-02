@@ -70,7 +70,7 @@ resource_exists() {
 }
 
 # Resolve the NSG that actually governs a given NIC: prefer the NIC-level NSG,
-# fall back to the subnet-stg-ind-110 NSG. Echoes the NSG name, or nothing if neither
+# fall back to the subnet-stg-ind-103 NSG. Echoes the NSG name, or nothing if neither
 # is attached. Keeps the LB rules self-correcting if NSG wiring later drifts.
 resolve_nic_nsg() {
   local nic="$1" nsg_id subnet_id
@@ -286,7 +286,7 @@ add_lb_nsg_rules() {
   fi
 }
 
-# Target whatever NSG actually governs each node's NIC (NIC- or subnet-stg-ind-110),
+# Target whatever NSG actually governs each node's NIC (NIC- or subnet-stg-ind-103),
 # de-duped in case both nodes share one NSG. Self-corrects if wiring drifts.
 LB_NSGS=()
 for NIC in "$WIN_VM1_NIC" "$WIN_VM2_NIC"; do

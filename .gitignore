@@ -21,3 +21,9 @@ tfplan
 
 # Vendored Microsoft DP-300 lab (its own ~200MB git repo)
 scripts/shell/dp-300-database-administrator/
+
+# Vendored DP-300 lab archive (~114MB)
+docs/lab-files/
+
+# Local Codex/MCP tooling config
+.codex/

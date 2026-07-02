@@ -220,6 +220,13 @@ resource "azurerm_network_interface_application_security_group_association" "asg
   application_security_group_id = azurerm_application_security_group.asg.id
 }
 
+# Finish the ASG wiring: the Windows DB NIC joins the same group as the Linux NIC
+# so a single ASG-destination rule covers BOTH SQL VMs (see sql_inbound_internet).
+resource "azurerm_network_interface_application_security_group_association" "db_asg_assoc" {
+  network_interface_id          = azurerm_network_interface.db_nic.id
+  application_security_group_id = azurerm_application_security_group.asg.id
+}
+
 resource "azurerm_network_security_rule" "rules" {
 
   for_each = local.nsg_rule_matrix
@@ -244,4 +251,41 @@ resource "azurerm_network_security_rule" "rules" {
 
   resource_group_name         = var.primary_rg
   network_security_group_name = each.value.nsg.name
+}
+
+# =====================================================
+# INBOUND SQL (1433) OVER THE PUBLIC INTERNET — SSMS-style + VM<->VM
+# -----------------------------------------------------
+# Lets you connect to each SQL VM's engine over the public internet (SSMS), and
+# lets the VMs reach each other's engine over their public IPs. Hybrid by design:
+#   - SOURCE must be an IP allowlist — an ASG groups VMs INSIDE the VNet, so it
+#     can never match an internet source (SSMS / another VM's public IP arrives
+#     with a public source IP that is not an ASG member). Scoped to the client IP
+#     + the two VM public IPs; NEVER 0.0.0.0/0 (matches the SSH/RDP/WinRM scoping
+#     and the project's no-public-exposure posture).
+#   - DESTINATION is the ASG — one rule covers every SQL VM in vm-asg, IP-agnostic.
+# NSGs are stateful, so the return path is automatic. The VM public IPs are Static
+# (azurerm_public_ip.*.allocation_method = "Static"), so referencing .ip_address
+# here is stable. ASGs are VNet-scoped: a future cross-region VNet would instead
+# need CIDR rules + peering, not this ASG.
+# =====================================================
+resource "azurerm_network_security_rule" "sql_inbound_internet" {
+  name                   = "Allow-SQL-Inbound-Internet"
+  priority               = 141 # free on the app-subnet NSG (outbound sql rule is 140)
+  direction              = "Inbound"
+  access                 = "Allow"
+  protocol               = "Tcp"
+  source_port_range      = "*"
+  destination_port_range = "1433"
+
+  source_address_prefixes = compact([
+    var.client_ip,                          # your SSMS workstation
+    azurerm_public_ip.vm_pip.ip_address,    # Linux VM   (VM<->VM over public IP)
+    azurerm_public_ip.db_vm_pip.ip_address, # Windows VM
+  ])
+
+  destination_application_security_group_ids = [azurerm_application_security_group.asg.id]
+
+  resource_group_name         = var.primary_rg
+  network_security_group_name = azurerm_network_security_group.nsg["dev-vnet-app-subnet"].name
 }

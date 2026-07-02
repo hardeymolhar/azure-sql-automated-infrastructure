@@ -3,17 +3,19 @@ source "$(dirname "$0")/env.conf"
 set -euo pipefail
 
 # =========================================================
-# APPLICATION SECURITY GROUP — Windows SQL nodes
+# APPLICATION SECURITY GROUP — all SQL VMs (Linux + Windows nodes)
 # ---------------------------------------------------------
-# Creates ONE Application Security Group (ASG) and attaches the NICs of both
-# Windows SQL Server VMs to it, so future NSG rules can target the logical
-# group (e.g. --destination-asgs <asg>) instead of per-IP / per-NIC entries.
+# Creates ONE Application Security Group (ASG) and attaches the NICs of ALL SQL
+# VMs (the Linux node and both Windows SQL Server VMs) to it, so NSG rules can
+# target the logical group (e.g. --destination-asgs <asg>) instead of per-IP /
+# per-NIC entries. sql-engine-access.sh adds the inbound 1433 rule that consumes
+# this ASG so the nodes can reach each other's engine over the public internet.
 #
 # Scope / placement:
-#   - An ASG is a REGIONAL construct. Both nodes live in the same region
-#     (centralindia) and VNet, just pinned to different availability zones
-#     (WIN_VM_ZONE=1 / WIN_VM_ZONE_2=2). Zones are *within* a region, so a
-#     single ASG spans both zonal NICs without issue.
+#   - An ASG is a REGIONAL construct. All SQL VMs live in the same region
+#     (centralindia) and VNet — the Linux node plus the two Windows nodes pinned
+#     to availability zones 1/2 (WIN_VM_ZONE / WIN_VM_ZONE_2). Zones are *within*
+#     a region, so one ASG spans all their NICs without issue.
 #   - Members are NIC ip-configurations, not the VMs themselves.
 #
 # IMPORTANT: this script ONLY provisions the ASG and the membership. It does
@@ -72,7 +74,7 @@ ASG_ID=$(az network asg show \
 # names) and its primary ip-config, then add the ASG to that ip-config.
 # =========================================================
 
-for VM in "$WIN_VM_NAME" "$WIN_VM_NAME_2"; do
+for VM in "$VM_NAME" "$WIN_VM_NAME" "$WIN_VM_NAME_2"; do
   echo -e "${BLUE}Resolving NIC for VM $VM...${NC}"
 
   NIC=$(az vm nic list \
@@ -116,7 +118,7 @@ echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}Application security group configured.${NC}"
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}ASG name:${NC}  $ASG_NAME"
-echo -e "${GREEN}Members:${NC}   NICs of $WIN_VM_NAME (zone $WIN_VM_ZONE) + $WIN_VM_NAME_2 (zone $WIN_VM_ZONE_2)"
+echo -e "${GREEN}Members:${NC}   NICs of $VM_NAME (Linux) + $WIN_VM_NAME (zone $WIN_VM_ZONE) + $WIN_VM_NAME_2 (zone $WIN_VM_ZONE_2)"
 echo ""
 echo -e "${GREEN}Use it in an NSG rule with, e.g.:${NC}"
 echo -e "  az network nsg rule create ... --destination-asgs $ASG_NAME"

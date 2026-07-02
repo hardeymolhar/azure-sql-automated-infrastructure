@@ -101,6 +101,8 @@ else
     --sku Standard
 fi
 
+
+
 # =========================================================
 # CREATE NIC
 # =========================================================
@@ -116,7 +118,8 @@ else
     --vnet-name "$VNET_NAME" \
     --subnet "$SUBNET_NAME" \
     --network-security-group "$NSG_NAME" \
-    --public-ip-address "$PUBLIC_IP_NAME"
+    --public-ip-address "$PUBLIC_IP_NAME" \
+    --location "$LOCATION"
 fi
 
 
@@ -155,6 +158,19 @@ az network vnet subnet create \
     --address-prefixes "$WIN_SUBNET_PREFIX"
 
   fi
+
+# =========================================================
+# ENABLE SERVICE ENDPOINTS ON WINDOWS SQL SUBNET
+# ---------------------------------------------------------
+# Microsoft.Storage is required so the storage account VNet rule can allow
+# traffic from this subnet (Cloud Witness + lab-file SAS downloads).
+# =========================================================
+echo -e "${BLUE}Configuring service endpoints on Windows SQL subnet...${NC}"
+az network vnet subnet update \
+  --resource-group "$RESOURCE_GROUP" \
+  --vnet-name "$VNET_NAME" \
+  --name "$WIN_SUBNET_NAME" \
+  --service-endpoints Microsoft.Storage
 
 # =========================================================
 # CREATE NSG
@@ -241,7 +257,8 @@ else
     --vnet-name "$VNET_NAME" \
     --subnet "$SUBNET_NAME" \
     --network-security-group "$WIN_NSG_NAME" \
-    --public-ip-address "$WIN_PUBLIC_IP_NAME"
+    --public-ip-address "$WIN_PUBLIC_IP_NAME" \
+    --location "$LOCATION"
 fi
 #########################################################
 # SECOND WINDOWSVM NETWORK SECTION
@@ -346,5 +363,6 @@ else
     --vnet-name "$VNET_NAME" \
     --subnet "$SUBNET_NAME" \
     --network-security-group "$WIN2_NSG_NAME" \
-    --public-ip-address "$WIN_PUBLIC_IP_NAME_2"
+    --public-ip-address "$WIN_PUBLIC_IP_NAME_2" \
+    --location "$LOCATION"
 fi

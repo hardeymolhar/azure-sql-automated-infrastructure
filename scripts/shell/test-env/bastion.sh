@@ -128,21 +128,6 @@ else
     --enable-tunneling true
 fi
 
-# =========================================================
-# RESOLVE VM RESOURCE IDS (for connection commands)
-# =========================================================
-
-# LIN_VM_ID=$(az vm show \
-#   --resource-group "$RESOURCE_GROUP" \
-#   --name "$VM_NAME" \
-#   --query id \
-#   -o tsv)
-
-WIN_VM_ID=$(az vm show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$WIN_VM_NAME" \
-  --query id \
-  -o tsv)
 
 # =========================================================
 # CONNECTION INFO

@@ -12,16 +12,14 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")"
-
-source "./env.conf"
+source "$(dirname "$0")/env.conf"
 
 # ---------------------------------------------------------
 # PHASE 0 - Baseline configuration
 # ---------------------------------------------------------
 # Seeds the variable/config files the later steps read.
 echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
-./var-config.sh
+# ./var-config.sh
 
 # ---------------------------------------------------------
 # PHASE 1 - Core infrastructure (foundation for everything)
@@ -30,22 +28,25 @@ echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
 # reference the subnet (and the subnet's service endpoints), so the VNet/subnet
 # must already exist. VMs also need the NICs that network.sh creates.
 
-# requires: nothing (this is the foundation).
-echo -e "${BLUE}STEP 1 - Virtual Network, subnets, NSGs, NICs, public IPs${NC}"
-./network.sh
+# echo -e "${BLUE}STEP 1 - Virtual Network, subnets, NSGs, NICs, public IPs${NC}"
+# ./network.sh
 
-# requires: network.sh (adds a storage network-rule bound to the subnet).
-echo -e "${BLUE}STEP 2 - Storage Account (backups, XEvents, diagnostics)${NC}"
-./storage.sh
+# # requires: network.sh (VNet + VNet link). Creates corp.internal Private DNS
+# # Zone, links it to the VNet, and seeds A records for the AG listener, WSFC CNO,
+# # and cluster node hostnames. Must run before the Ansible step so DNS resolves
+# # from inside the VNet when cluster formation and AG listener binding happen.
+# echo -e "${BLUE}STEP 1b - Private DNS Zone (corp.internal — AG listener, WSFC CNO, node records)${NC}"
+# ./private-dns.sh
 
-# requires: network.sh (adds a key-vault network-rule bound to the subnet).
-# Creates the CMK, the disk-encryption-set key, and the SSH key secrets.
-echo -e "${BLUE}STEP 3 - Key Vault + encryption keys${NC}"
-./key-vault.sh
+# echo -e "${BLUE}STEP 2 - Storage Account (backups, XEvents, diagnostics)${NC}"
+# ./storage.sh
 
-# requires: network.sh (needs the VNet + VM NSGs it adds rules to). Bastion only
-# depends on networking, so it can run any time after STEP 1.
-# echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
+# echo -e "${BLUE}STEP 3 - Key Vault + encryption keys${NC}"
+# ./key-vault.sh
+
+# # requires: network.sh (needs the VNet + VM NSGs it adds rules to). Bastion only
+# # depends on networking, so it can run any time after STEP 1.
+# # echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
 # ./bastion.sh
 
 # ---------------------------------------------------------
@@ -56,12 +57,12 @@ echo -e "${BLUE}STEP 3 - Key Vault + encryption keys${NC}"
 # ATTACHES those disks.
 
 # requires: key-vault.sh (the DES wraps a Key Vault key).
-# echo -e "${BLUE}STEP 5 - Disk Encryption Set + encrypted disks (Linux)${NC}"
-# ./encrypted-mgd-disks.sh
+echo -e "${BLUE}STEP 5 - Disk Encryption Set + encrypted disks (Linux)${NC}"
+./encrypted-mgd-disks.sh
 
-# # requires: network.sh (NIC) + STEP 5 (the disks it attaches).
-# echo -e "${BLUE}STEP 6 - Linux Application VM (creates VM, attaches disks)${NC}"
-# ./app-vm.sh
+# requires: network.sh (NIC) + STEP 5 (the disks it attaches).
+echo -e "${BLUE}STEP 6 - Linux Application VM (creates VM, attaches disks)${NC}"
+./app-vm.sh
 
 # ---------------------------------------------------------
 # PHASE 3 - Windows SQL Server nodes (Always On AG, 2 zones)
@@ -90,6 +91,23 @@ echo -e "${BLUE}STEP 10 - Encrypted disks for SQL Node 2${NC}"
 # pool to publish the Always On AG listener's floating IP.
 echo -e "${BLUE}STEP 11 - Internal Load Balancer (AG listener)${NC}"
 ./load-balancer.sh
+
+# requires: all SQL VMs exist (their NICs + public IPs). Groups every SQL VM into
+# one ASG, then opens inbound 1433 from the client IP + each VM's public IP (ASG
+# as the rule destination) so the Linux and Windows nodes can reach each other's
+# SQL engine over the public internet (SSMS-style). Sources stay scoped (never
+# 0.0.0.0/0), matching the SSH/RDP/WinRM client-IP rules.
+echo -e "${BLUE}STEP 11b - SQL engine peer access (ASG + inbound 1433 allowlist)${NC}"
+./application-security-group.sh
+./sql-engine-access.sh
+
+# requires: both Windows VMs up (NIC resolution). Creates asg-sqlcluster, attaches
+# both Windows node NICs, and adds 5 inbound rules on each Windows NSG (priorities
+# 100–140) for the cluster ports: 1433 SQL, 5022 HADR endpoint, 3343 heartbeat,
+# 135 RPC endpoint mapper, 49152-65535 dynamic RPC. ASG-to-ASG rules are valid for
+# intra-VNet traffic and correctly handle the no-AD workgroup cluster scenario.
+echo -e "${BLUE}STEP 11c - WSFC cluster NSG rules (asg-sqlcluster, ports 1433/5022/3343/135/dyn-RPC)${NC}"
+./cluster-nsg-rules.sh
 
 # ---------------------------------------------------------
 # PHASE 4 - In-guest configuration (Ansible)
@@ -166,7 +184,7 @@ echo -e "${BLUE}STEP 12 - Configure VMs with Ansible (drives, packages, SQL)${NC
 
 # LIN_VM_IP=$(az vm list-ip-addresses \
 #   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-#   --name "vm-stg-ind-110" \
+#   --name "vm-stg-ind-103" \
 #   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
 #   -o tsv)
 

@@ -7,14 +7,59 @@
   # --extra-vars from scripts/shell/test-env/vm-config.sh. Non-secret values
   # below carry sane defaults so the play is runnable/lintable standalone.
   vars:
+    # Password used by `become: runas` on the SQL-engine install task. runas
+    # needs a password to do a batch logon (without one it falls back to S4U =
+    # another network logon, which would NOT fix the DPAPI failure). Reuses the
+    # existing WinRM password — no new secret is introduced.
+    ansible_become_password: "{{ ansible_password }}"
+
     sql_installer_url: "https://aka.ms/sqlserver2022developer"
     ssms_installer_url: "https://aka.ms/ssmsfullsetup"
+
+    # DP-300 lab archive: each VM downloads it from Blob Storage via a SAS URL
+    # minted by vm-config.sh and passed in with --extra-vars. Empty default so a
+    # standalone play run (no SAS supplied) simply skips the download.
+    lab_file_name: "dp-300-database-administrator-master.zip"
+    lab_blob_sas_url: ""
+
+    # AdventureWorks2017 sample DB restored from the lab archive (see the restore
+    # section). The .bak is located at runtime under sql_media_dir; its data file
+    # is moved to the DATA drive and its log to the LOG drive.
+    adventureworks_db_name: "AdventureWorks2017"
+    adventureworks_bak_name: "AdventureWorks2017.bak"
 
     sql_media_dir: 'C:\sqlmedia'
     sql_ssei_path: 'C:\sqlmedia\SQL2022-SSEI-Dev.exe'
     sql_box_exe: 'C:\sqlmedia\SQLServer2022-DEV-x64-ENU.exe'
     sql_setup_path: 'C:\sqlmedia\setup\SETUP.EXE'
     sql_engine_exe: 'C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Binn\sqlservr.exe'
+
+    # Probe that classifies the engine install as COMPLETE / PARTIAL / ABSENT.
+    # Defined ONCE here and reused by both the idempotency gate and the
+    # post-install re-verify so they read the exact same signals. COMPLETE
+    # requires all three of: the engine exe on disk, the MSSQLSERVER service
+    # registered, AND setup's ConfigurationState\SQL_Engine_Core_Inst = 1 — the
+    # value setup writes only when the database engine configured CLEANLY. A run
+    # that timed out or died mid-configuration leaves the exe behind without that
+    # flag, so it is correctly reported PARTIAL (instance registered but not
+    # cleanly configured) → uninstall + reinstall, rather than COMPLETE → false
+    # success.
+    sql_engine_probe: |
+      $ErrorActionPreference = 'Stop'
+      $instanceKey = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER'
+      $exe = Test-Path '{{ sql_engine_exe }}'
+      $svc = [bool](Get-Service -Name MSSQLSERVER -ErrorAction SilentlyContinue)
+      $registered = (Test-Path $instanceKey) -or $svc
+      $configured = $false
+      $cs = Join-Path $instanceKey 'ConfigurationState'
+      if (Test-Path $cs) {
+        $p = Get-ItemProperty -Path $cs
+        if (($p.PSObject.Properties.Name -contains 'SQL_Engine_Core_Inst') -and
+            $p.SQL_Engine_Core_Inst -eq 1) { $configured = $true }
+      }
+      if ($exe -and $svc -and $configured) { 'COMPLETE' }
+      elseif (-not $registered -and -not $exe) { 'ABSENT' }
+      else { 'PARTIAL' }
 
     ssms_installer_path: 'C:\sqlmedia\SSMS-Setup-ENU.exe'
     ssms_exe_path: 'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20\Common7\IDE\Ssms.exe'
@@ -71,14 +116,117 @@
       - 'NT AUTHORITY\SYSTEM'
       - 'NT SERVICE\MSSQLSERVER'
 
+    # WSFC / Always On prerequisites
+    hadr_endpoint_port: 5022
+    hadr_endpoint_name: "Hadr_endpoint"
+    wsfc_features:
+      - Failover-Clustering
+      - RSAT-Clustering
+      - RSAT-Clustering-PowerShell
+      - RSAT-Clustering-AutomationServer
+      - RSAT-Clustering-CmdInterface
+
   tasks:
     # =====================================================
-    # IDEMPOTENCY GATE — is the database engine already installed?
+    # CREATE THE SQL MEDIA WORKING DIRECTORY
+    # Shared staging dir for the DP-300 lab archive AND the SQL Server media +
+    # SSMS downloads below — must exist before anything writes into it.
     # =====================================================
-    - name: Check whether the SQL Server engine is already installed
-      ansible.windows.win_stat:
-        path: "{{ sql_engine_exe }}"
-      register: sql_engine
+    - name: Create the SQL media working directory
+      ansible.windows.win_file:
+        path: "{{ sql_media_dir }}"
+        state: directory
+
+    # =====================================================
+    # SECTION — WINDOWS FAILOVER CLUSTERING PREREQUISITE (OS feature only)
+    # -----------------------------------------------------
+    # Install and validate the Failover-Clustering Windows features. This is the
+    # ONE clustering step with no SQL dependency, so it runs early — before the
+    # engine install — to get its (possible) reboot out of the way without
+    # disrupting a freshly-installed engine.
+    #   1. Install Failover-Clustering Windows features
+    #   2. Reboot if the feature install requires it
+    #   3. Validate the feature is installed
+    #
+    # NOTE — the SQL-dependent half of Always On (Enable-SqlAlwaysOn, the HADR
+    # endpoint, and the verify) was MOVED OUT of this section to the
+    # "ALWAYS ON / HADR ENABLEMENT" section near the END of this play. It used to
+    # run here, at the top, which was a dependency inversion: enabling HADR needs
+    # the engine installed + running AND the SqlServer PowerShell module present
+    # (Enable-SqlAlwaysOn / Invoke-Sqlcmd), neither of which exists this early.
+    # See that section's header for the full rationale.
+    # =====================================================
+
+    # - name: Install Windows Failover Clustering features
+    #   ansible.windows.win_feature:
+    #     name: "{{ wsfc_features }}"
+    #     state: present
+    #     include_management_tools: true
+    #   register: wsfc_feature_install
+
+    # - name: Reboot if Failover-Clustering feature install requires it
+    #   ansible.windows.win_reboot:
+    #     reboot_timeout: 600
+    #     post_reboot_delay: 30
+    #   when: wsfc_feature_install.reboot_required | default(false)
+
+    # - name: Validate Failover-Clustering feature is installed
+    #   ansible.windows.win_shell: |
+    #     $feat = Get-WindowsFeature -Name Failover-Clustering
+    #     if ($feat.InstallState -ne 'Installed') {
+    #       throw "Failover-Clustering feature is not installed: InstallState=$($feat.InstallState)"
+    #     }
+    #     Write-Output "Failover-Clustering: INSTALLED"
+    #   changed_when: false
+
+    # =====================================================
+    # IDEMPOTENCY GATE — is the engine COMPLETELY installed?
+    # -----------------------------------------------------
+    # A bare win_stat on sqlservr.exe is NOT a safe success signal: a run that
+    # timed out or died mid-configuration (the DPAPI/datastore failure noted in
+    # the install task is a common cause) leaves the binaries on disk while the
+    # instance is half-built. The exe-exists gate would then SKIP the reinstall
+    # and march on as if SQL were healthy — a false success that only surfaces
+    # later as a cryptic "Failed to start service".
+    #
+    # Instead, classify the install three ways (see sql_engine_probe):
+    #   COMPLETE — exe present, service registered, SQL_Engine_Core_Inst = 1.
+    #   ABSENT   — nothing installed (no exe, instance not registered) → install.
+    #   PARTIAL  — anything in between (binaries/registry present but not cleanly
+    #              configured) → UNINSTALL + REBOOT + REINSTALL, then re-verify.
+    # =====================================================
+    - name: Classify the SQL Server engine install (COMPLETE / PARTIAL / ABSENT)
+      ansible.windows.win_shell: "{{ sql_engine_probe }}"
+      register: sql_engine_state
+      changed_when: false
+
+    - name: Derive the engine install/reinstall decision
+      ansible.builtin.set_fact:
+        sql_engine_install_needed: "{{ ('COMPLETE' not in sql_engine_state.stdout) | bool }}"
+        sql_engine_absent: "{{ ('ABSENT' in sql_engine_state.stdout) | bool }}"
+        sql_engine_partial: "{{ ('PARTIAL' in sql_engine_state.stdout) | bool }}"
+
+    - name: Report the detected SQL Server engine state
+      ansible.builtin.debug:
+        msg: "SQL Server engine install state: {{ sql_engine_state.stdout | trim }}"
+
+    # =====================================================
+    # INSTALL SQL SERVER MANAGEMENT STUDIO (SSMS)
+    # Independent of the engine — always kept present so DBA tooling is on the VM.
+    # creates_path makes the install idempotent (skipped once SSMS is installed).
+    # =====================================================
+    - name: Download the SSMS installer
+      ansible.windows.win_get_url:
+        url: "{{ ssms_installer_url }}"
+        dest: "{{ sql_media_dir }}\\SSMS-Setup-ENU.exe"
+        force: false
+
+    - name: Install SSMS silently
+      ansible.windows.win_package:
+        path: "{{ sql_media_dir }}\\SSMS-Setup-ENU.exe"
+        arguments: /Install /Quiet /Norestart
+        creates_path: "{{ ssms_exe_path }}"
+        state: present
 
     # =====================================================
     # DOWNLOAD + EXTRACT SQL SERVER MEDIA (inside the VM)
@@ -87,79 +235,158 @@
     # `creates:` guards would then keep skipping re-acquisition forever. So we
     # validate the downloaded package and ALWAYS re-extract into a freshly-cleaned
     # dir before install — a bad attempt self-heals. All gated on the engine not
-    # being installed yet (skipped entirely once SQL is present → idempotent).
+    # being COMPLETE (sql_engine_install_needed): media is required for both a
+    # fresh ABSENT install and a PARTIAL uninstall+reinstall, and skipped once SQL
+    # is COMPLETE.
     # =====================================================
-    # - name: Create the SQL media working directory
-    #   ansible.windows.win_file:
-    #     path: "{{ sql_media_dir }}"
-    #     state: directory
-    #   when: not sql_engine.stat.exists
+    - name: Download the SQL Server 2022 Developer bootstrapper
+      ansible.windows.win_get_url:
+        url: "{{ sql_installer_url }}"
+        dest: "{{ sql_ssei_path }}"
+        force: false
+      when: sql_engine_install_needed
 
-    # - name: Download the SQL Server 2022 Developer bootstrapper
-    #   ansible.windows.win_get_url:
-    #     url: "{{ sql_installer_url }}"
-    #     dest: "{{ sql_ssei_path }}"
-    #     force: false
-    #   when: not sql_engine.stat.exists
+    - name: Download the full SQL Server installation media (CAB)
+      ansible.windows.win_command: >-
+        "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+        /MEDIAPATH={{ sql_media_dir }} /QUIET
+      args:
+        creates: "{{ sql_box_exe }}"
+      when: sql_engine_install_needed
 
-    # - name: Download the full SQL Server installation media (CAB)
-    #   ansible.windows.win_command: >-
-    #     "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-    #     /MEDIAPATH={{ sql_media_dir }} /QUIET
-    #   args:
-    #     creates: "{{ sql_box_exe }}"
-    #   when: not sql_engine.stat.exists
+    - name: Check the downloaded media package
+      ansible.windows.win_stat:
+        path: "{{ sql_box_exe }}"
+      register: sql_box_stat
+      when: sql_engine_install_needed
 
-    # - name: Check the downloaded media package
-    #   ansible.windows.win_stat:
-    #     path: "{{ sql_box_exe }}"
-    #   register: sql_box_stat
-    #   when: not sql_engine.stat.exists
+    - name: Remove the media package if it is missing/too small (corrupt or partial)
+      ansible.windows.win_file:
+        path: "{{ sql_box_exe }}"
+        state: absent
+      when:
+        - sql_engine_install_needed
+        - (sql_box_stat.stat.size | default(0)) < 104857600
 
-    # - name: Remove the media package if it is missing/too small (corrupt or partial)
-    #   ansible.windows.win_file:
-    #     path: "{{ sql_box_exe }}"
-    #     state: absent
-    #   when:
-    #     - not sql_engine.stat.exists
-    #     - (sql_box_stat.stat.size | default(0)) < 104857600
+    - name: Re-download the media package if it was removed
+      ansible.windows.win_command: >-
+        "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+        /MEDIAPATH={{ sql_media_dir }} /QUIET
+      args:
+        creates: "{{ sql_box_exe }}"
+      when: sql_engine_install_needed
 
-    # - name: Re-download the media package if it was removed
-    #   ansible.windows.win_command: >-
-    #     "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-    #     /MEDIAPATH={{ sql_media_dir }} /QUIET
-    #   args:
-    #     creates: "{{ sql_box_exe }}"
-    #   when: not sql_engine.stat.exists
+    - name: Remove any previous (possibly corrupt) extracted setup tree
+      ansible.windows.win_file:
+        path: '{{ sql_media_dir }}\setup'
+        state: absent
+      when: sql_engine_install_needed
 
-    # - name: Remove any previous (possibly corrupt) extracted setup tree
-    #   ansible.windows.win_file:
-    #     path: '{{ sql_media_dir }}\setup'
-    #     state: absent
-    #   when: not sql_engine.stat.exists
+    - name: Extract the SQL Server installation media into a clean directory
+      ansible.windows.win_command: >-
+        "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
+      args:
+        creates: "{{ sql_setup_path }}"
+      when: sql_engine_install_needed
 
-    # - name: Extract the SQL Server installation media into a clean directory
-    #   ansible.windows.win_command: >-
-    #     "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
-    #   args:
-    #     creates: "{{ sql_setup_path }}"
-    #   when: not sql_engine.stat.exists
+    - name: Verify SETUP.EXE extracted successfully
+      ansible.windows.win_stat:
+        path: "{{ sql_setup_path }}"
+      register: sql_setup_stat
+      when: sql_engine_install_needed
 
-    # - name: Verify SETUP.EXE extracted successfully
-    #   ansible.windows.win_stat:
-    #     path: "{{ sql_setup_path }}"
-    #   register: sql_setup_stat
-    #   when: not sql_engine.stat.exists
+    - name: Fail early if the SQL setup media is still missing
+      ansible.builtin.fail:
+        msg: >-
+          SQL setup not found at {{ sql_setup_path }} after extraction — the
+          downloaded media is corrupt/incomplete. Delete {{ sql_media_dir }} on
+          the VM and re-run to force a clean re-download.
+      when:
+        - sql_engine_install_needed
+        - not (sql_setup_stat.stat.exists | default(false))
 
-    # - name: Fail early if the SQL setup media is still missing
-    #   ansible.builtin.fail:
-    #     msg: >-
-    #       SQL setup not found at {{ sql_setup_path }} after extraction — the
-    #       downloaded media is corrupt/incomplete. Delete {{ sql_media_dir }} on
-    #       the VM and re-run to force a clean re-download.
-    #   when:
-    #     - not sql_engine.stat.exists
-    #     - not (sql_setup_stat.stat.exists | default(false))
+    # =====================================================
+    # SETUP MEDIA GUARD — the media download/extract tasks above are commented
+    # out for fast iteration, so the engine install / uninstall / reinstall below
+    # rely on SETUP.EXE being PRE-STAGED at {{ sql_setup_path }}. Fail fast with a
+    # clear message if it is missing, rather than letting win_command die with a
+    # cryptic "file not found". Only enforced when work is actually needed.
+    # =====================================================
+    - name: Check the pre-staged SQL Server setup media is present
+      ansible.windows.win_stat:
+        path: "{{ sql_setup_path }}"
+      register: sql_setup_present
+      when: sql_engine_install_needed
+
+    - name: Fail early if the SQL Server setup media is not staged
+      ansible.builtin.fail:
+        msg: >-
+          SQL Server setup was not found at {{ sql_setup_path }}. The media
+          download/extract tasks are commented out, so stage the extracted setup
+          media on the VM (or uncomment the "DOWNLOAD + EXTRACT SQL SERVER MEDIA"
+          section) before running — both the fresh install and the partial-
+          install uninstall+reinstall need it.
+      when:
+        - sql_engine_install_needed
+        - not (sql_setup_present.stat.exists | default(false))
+
+    # =====================================================
+    # RECOVER A PARTIAL / NEVER-CONFIGURED INSTALL (uninstall -> reboot -> reinstall)
+    # -----------------------------------------------------
+    # Context  — PARTIAL means the engine is registered but setup never set
+    #            ConfigurationState\SQL_Engine_Core_Inst = 1 (it died/timed out
+    #            mid-configuration). The live VM's Setup Summary.txt proves
+    #            /ACTION=Repair CANNOT fix this — it returns 0x84B40002: "the SQL
+    #            Server feature 'SQL_Engine_Core_Inst' is not in a supported state
+    #            for repair, as it was never successfully configured ... To
+    #            continue, remove the specified SQL Server feature."
+    # Decision — for PARTIAL, UNINSTALL the instance, REBOOT, then let the install
+    #            task below reinstall it (gated on "not COMPLETE").
+    # Rationale— Microsoft's "Repair a failed SQL Server installation" and "Remove
+    #            a partial installation of SQL Server" docs both say a never-
+    #            configured feature must be removed and reinstalled, not repaired;
+    #            the reboot clears the pending-file-rename flag that would
+    #            otherwise fail the reinstall's RebootRequiredCheck rule.
+    # Alts     — /ACTION=Repair (rejected: fails by design here);
+    #            /SkipRules=RebootRequiredCheck instead of rebooting (rejected:
+    #            leftover pending file ops can collide with the reinstall);
+    #            msiexec /x {ProductCode} cleanup (the documented escalation if
+    #            uninstall itself fails). Run under runas for the same DPAPI/
+    #            loaded-profile reason as the install below.
+    # =====================================================
+    - name: Uninstall the partial (never-configured) SQL Server instance
+      ansible.windows.win_command: >-
+        "{{ sql_setup_path }}" /Q /ACTION=Uninstall
+        /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: "{{ ansible_user }}"
+      register: sql_uninstall
+      changed_when: sql_uninstall.rc in [0, 3010]
+      failed_when: sql_uninstall.rc not in [0, 3010]   # 3010 = success, reboot required
+      when: sql_engine_partial
+
+    # Belt-and-suspenders: a never-configured install can leave system-DB/binary
+    # files that block a clean reinstall ("files already exist"). Remove ONLY the
+    # broken instance's own folders — the binary instance dir and the system-DB
+    # dir the reinstall recreates. The user data/log drives are left untouched.
+    # Idempotent (a no-op when uninstall already cleaned them).
+    - name: Remove the broken instance's leftover folders before reinstall
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - 'C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER'
+        - "{{ sql_system_data_dir }}"
+      loop_control:
+        label: "{{ item }}"
+      when: sql_engine_partial
+
+    - name: Reboot to clear the pending-reboot flag before reinstall
+      ansible.windows.win_reboot:
+        reboot_timeout: 1200
+        post_reboot_delay: 30
+      when: sql_engine_partial
 
     # =====================================================
     # UNATTENDED INSTALL (all prompts/approvals automated)
@@ -169,52 +396,165 @@
     # logs on G:, tempdb on T:, backups on H:. /SQLSVCINSTANTFILEINIT grants the
     # "Perform Volume Maintenance Task" right. Features add Replication + Full-Text.
     # The drives are formatted by windows-dbdrive-configuration.yml (runs first);
-    # setup creates the subfolders. Applies to NEW VMs only (engine-absent gate).
-    # - name: Install the SQL Server database engine unattended
-    #   ansible.windows.win_command: >-
-    #     "{{ sql_setup_path }}" /Q /ACTION=Install
-    #     /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
-    #     /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
-    #     /SQLSVCACCOUNT="NT AUTHORITY\System"
-    #     /AGTSVCACCOUNT="NT AUTHORITY\System"
-    #     /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
-    #     /SECURITYMODE=SQL /SAPWD="{{ sa_password }}"
-    #     /INSTANCEDIR="{{ sql_instance_dir }}"
-    #     /INSTALLSQLDATADIR="{{ sql_system_data_dir }}"
-    #     /SQLUSERDBDIR="{{ sql_default_data_dir }}"
-    #     /SQLUSERDBLOGDIR="{{ sql_default_log_dir }}"
-    #     /SQLTEMPDBDIR="{{ sql_tempdb_dir }}"
-    #     /SQLTEMPDBLOGDIR="{{ sql_tempdb_dir }}"
-    #     /SQLBACKUPDIR="{{ sql_backup_dir }}"
-    #     /SQLSVCINSTANTFILEINIT="True"
-    #     /TCPENABLED=1 /UPDATEENABLED=0
-    #   args:
-    #     creates: "{{ sql_engine_exe }}"
-    #   when: not sql_engine.stat.exists
-    #   no_log: false
+    # setup creates the subfolders. Runs for a fresh ABSENT install AND as the
+    # reinstall half of the PARTIAL recovery above (gated: engine not COMPLETE).
+    #
+    # Context  — this play connects over WinRM with NTLM (inventory.ini), which
+    #            gives every task a *network* logon (type 3): no loaded user
+    #            profile, no delegation. That is fine for the other tasks, but
+    #            SQL setup serializes its settings datastore to XML and DPAPI-
+    #            protects the sensitive values in it (/SAPWD, service context).
+    #            DPAPI needs an interactive/batch logon with a profile, so under
+    #            the bare NTLM token setup dies during datastore init with
+    #            "There was an error generating the XML document" (0x84B10001,
+    #            facility 1201) — before it can even write a Setup Bootstrap log.
+    # Decision — run ONLY this task under `become: runas`. runas *with a password*
+    #            (ansible_become_password, set in play vars) performs a batch
+    #            logon that loads the profile and makes DPAPI work.
+    # Rationale— the failure is the logon type/profile, not the parameters or the
+    #            drives; switching the logon for this one task is the minimal fix.
+    # Alts     — CredSSP transport (delegates but often still fails here, more
+    #            setup) and win_scheduled_task (bullet-proof but verbose) — kept
+    #            as fallbacks if runas ever hits a profile/DPAPI issue on an image.
+    - name: Install the SQL Server database engine unattended
+      ansible.windows.win_command: >-
+        "{{ sql_setup_path }}" /Q /ACTION=Install
+        /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
+        /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
+        /SQLSVCACCOUNT="NT AUTHORITY\System"
+        /AGTSVCACCOUNT="NT AUTHORITY\System"
+        /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+        /SECURITYMODE=SQL /SAPWD="{{ sa_password }}"
+        /INSTANCEDIR="{{ sql_instance_dir }}"
+        /INSTALLSQLDATADIR="{{ sql_system_data_dir }}"
+        /SQLUSERDBDIR="{{ sql_default_data_dir }}"
+        /SQLUSERDBLOGDIR="{{ sql_default_log_dir }}"
+        /SQLTEMPDBDIR="{{ sql_tempdb_dir }}"
+        /SQLTEMPDBLOGDIR="{{ sql_tempdb_dir }}"
+        /SQLBACKUPDIR="{{ sql_backup_dir }}"
+        /SQLSVCINSTANTFILEINIT="True"
+        /TCPENABLED=1 /UPDATEENABLED=0
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: "{{ ansible_user }}"   # re-logon as a batch token (loaded profile, working DPAPI)
+      register: sql_install
+      changed_when: sql_install.rc in [0, 3010]
+      failed_when: sql_install.rc not in [0, 3010]   # 3010 = success, reboot required
+      when: sql_engine_install_needed
+      no_log: false
 
-    # - name: Ensure the SQL Server service is running and set to auto-start
-    #   ansible.windows.win_service:
-    #     name: MSSQLSERVER
-    #     state: started
-    #     start_mode: auto
+    # If the (re)install reported 3010, an OS reboot is pending — finalize it
+    # before the engine is started so no pending file operations linger. Skipped
+    # on rc 0 (no reboot needed) and when the install was skipped entirely.
+    - name: Reboot after the reinstall if setup reported reboot-required
+      ansible.windows.win_reboot:
+        reboot_timeout: 1200
+        post_reboot_delay: 30
+      when:
+        - sql_install is defined
+        - sql_install is changed
+        - sql_install.rc == 3010
+
+    # Re-classify after the install / uninstall+reinstall. If the engine is STILL
+    # not COMPLETE, fail loudly HERE instead of reporting success — the whole
+    # point of this change: a partial install must never pass as done on a re-run.
+    # - name: Re-classify the SQL Server engine after install / reinstall
+    #   ansible.windows.win_shell: "{{ sql_engine_probe }}"
+    #   register: sql_engine_state_post
+    #   changed_when: false
+    #   when: sql_engine_install_needed
+
+    - name: Fail if the SQL Server engine is still not completely installed
+      ansible.builtin.fail:
+        msg: >-
+          The SQL Server engine is still not COMPLETE after
+          {{ 'the uninstall + reinstall' if sql_engine_partial else 'the install' }}
+          (state: {{ sql_engine_state_post.stdout | default('') | trim }}). A prior
+          attempt left a partial install that the uninstall + reinstall could not
+          resolve. Review
+          'C:\Program Files\Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt'
+          on the VM for the failing component, then clean up the MSSQLSERVER
+          instance (msiexec /x of any leftover ProductCode) and delete
+          {{ sql_media_dir }} to force a clean reinstall.
+      when:
+        - sql_engine_install_needed
+        - "'COMPLETE' not in (sql_engine_state_post.stdout | default(''))"
+
+    # =====================================================
+    # START THE ENGINE (with startup diagnostics on failure)
+    # win_service throws a bare "Failed to start service" that hides WHY the
+    # engine crashed. The rescue surfaces the real cause — the SQL ERRORLOG, the
+    # Application event log, and the Setup Bootstrap summary — so an opaque
+    # failure becomes the actual "operating system error N" / config error. The
+    # classify→uninstall/reinstall→re-verify gate above now catches a partial
+    # prior install before this point, so reaching the rescue here means a genuine
+    # runtime crash (bad config, drive ACL, operating-system error) rather than a
+    # skipped reinstall.
+    # =====================================================
+    - name: Ensure the SQL Server service is running and set to auto-start
+      block:
+        - name: Start the SQL Server service
+          ansible.windows.win_service:
+            name: MSSQLSERVER
+            state: started
+            start_mode: auto
+
+      rescue:
+        - name: Collect SQL Server startup diagnostics
+          ansible.windows.win_shell: |
+            $ErrorActionPreference = 'SilentlyContinue'
+            Write-Output '===== SERVICE STATUS ====='
+            Get-Service MSSQLSERVER | Format-List Name, Status, StartType | Out-String
+            Write-Output '===== SQL ERRORLOG (most recent) ====='
+            $logs = Get-ChildItem -Path 'F:\SQLSYSTEM', 'C:\Program Files\Microsoft SQL Server' `
+              -Recurse -Filter 'ERRORLOG' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($logs) {
+              Write-Output ('Path: ' + $logs.FullName)
+              Get-Content -Path $logs.FullName -Tail 40 | Out-String
+            } else {
+              Write-Output '(no ERRORLOG found - the engine may have failed before writing one)'
+            }
+            Write-Output '===== APPLICATION EVENT LOG (MSSQLSERVER, last 15) ====='
+            Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='MSSQLSERVER'} `
+              -MaxEvents 15 -ErrorAction SilentlyContinue |
+              Select-Object TimeCreated, Id, LevelDisplayName, Message | Format-List | Out-String
+            Write-Output '===== SETUP SUMMARY (tail) ====='
+            $summary = 'C:\Program Files\Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt'
+            if (Test-Path $summary) { Get-Content -Path $summary -Tail 30 | Out-String }
+            else { Write-Output '(no Summary.txt found)' }
+          register: sql_start_diag
+          changed_when: false
+
+        - name: Show SQL Server startup diagnostics
+          ansible.builtin.debug:
+            var: sql_start_diag.stdout_lines
+
+        - name: Fail with the SQL Server startup diagnostics
+          ansible.builtin.fail:
+            msg: >-
+              SQL Server (MSSQLSERVER) failed to start — see the ERRORLOG /
+              Application event log / Setup summary dumped above for the real
+              cause. If this is a partial prior install (sqlservr.exe present but
+              the instance is broken), uninstall the instance and delete
+              {{ sql_media_dir }}, then re-run to force a clean reinstall.
 
     # =====================================================
     # CONNECTIVITY
     # =====================================================
-    # - name: Open Windows firewall for SQL Server (TCP 1433)
-    #   community.windows.win_firewall_rule:
-    #     name: "SQL Server (TCP 1433)"
-    #     localport: "{{ sql_port }}"
-    #     direction: in
-    #     action: allow
-    #     protocol: tcp
-    #     profiles:
-    #       - domain
-    #       - private
-    #       - public
-    #     state: present
-    #     enabled: true
+    - name: Open Windows firewall for SQL Server (TCP 1433)
+      community.windows.win_firewall_rule:
+        name: "SQL Server (TCP 1433)"
+        localport: "{{ sql_port }}"
+        direction: in
+        action: allow
+        protocol: tcp
+        profiles:
+          - domain
+          - private
+          - public
+        state: present
+        enabled: true
 
     # =====================================================
     # ENABLE TCP/IP PROTOCOL — the engine often ships with the TCP/IP protocol
@@ -223,39 +563,39 @@
     # Pure-registry approach (no SMO/WMI dependency); idempotent via win_regedit,
     # and the restart only fires when something actually changed.
     # =====================================================
-    # - name: Enable the SQL Server TCP/IP network protocol
-    #   ansible.windows.win_regedit:
-    #     path: "{{ sql_tcp_reg_path }}"
-    #     name: Enabled
-    #     data: 1
-    #     type: dword
-    #   register: tcp_enabled
+    - name: Enable the SQL Server TCP/IP network protocol
+      ansible.windows.win_regedit:
+        path: "{{ sql_tcp_reg_path }}"
+        name: Enabled
+        data: 1
+        type: dword
+      register: tcp_enabled
 
-    # - name: Pin SQL Server to the static TCP port and clear dynamic ports
-    #   ansible.windows.win_regedit:
-    #     path: "{{ sql_tcp_reg_path }}\\IPAll"
-    #     name: "{{ item.name }}"
-    #     data: "{{ item.data }}"
-    #     type: string
-    #   loop:
-    #     - { name: TcpPort, data: "{{ sql_port }}" }
-    #     - { name: TcpDynamicPorts, data: "" }
-    #   loop_control:
-    #     label: "{{ item.name }} = '{{ item.data }}'"
-    #   register: tcp_port
+    - name: Pin SQL Server to the static TCP port and clear dynamic ports
+      ansible.windows.win_regedit:
+        path: "{{ sql_tcp_reg_path }}\\IPAll"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: string
+      loop:
+        - { name: TcpPort, data: "{{ sql_port }}" }
+        - { name: TcpDynamicPorts, data: "" }
+      loop_control:
+        label: "{{ item.name }} = '{{ item.data }}'"
+      register: tcp_port
 
-    # - name: Restart SQL Server to apply the TCP/IP protocol change
-    #   ansible.windows.win_service:
-    #     name: MSSQLSERVER
-    #     state: restarted
-    #   when: tcp_enabled is changed or tcp_port is changed
+    - name: Restart SQL Server to apply the TCP/IP protocol change
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: restarted
+      when: tcp_enabled is changed or tcp_port is changed
 
-    # - name: Wait for SQL Server to listen on the TCP port
-    #   ansible.windows.win_wait_for:
-    #     host: 127.0.0.1
-    #     port: "{{ sql_port }}"
-    #     delay: 5
-    #     timeout: 180
+    - name: Wait for SQL Server to listen on the TCP port
+      ansible.windows.win_wait_for:
+        host: 127.0.0.1
+        port: "{{ sql_port }}"
+        delay: 5
+        timeout: 180
 
     # =====================================================
     # T-SQL CLIENT — engine-only install ships no sqlcmd, so use
@@ -272,27 +612,27 @@
     #   args:
     #     creates: 'C:\Program Files\PackageManagement\ProviderAssemblies\nuget'
 
-    # - name: Trust the PSGallery repository
-    #   ansible.windows.win_shell: >-
-    #     Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-    #   changed_when: false
+    - name: Trust the PSGallery repository
+      ansible.windows.win_shell: >-
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+      changed_when: false
 
     # - name: Install the SqlServer PowerShell module (provides Invoke-Sqlcmd)
-    #   ansible.windows.win_shell: >-
-    #     [Net.ServicePointManager]::SecurityProtocol =
-    #     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
-    #     if (-not (Get-Module -ListAvailable -Name SqlServer)) {
-    #     Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers;
-    #     Write-Output 'installed' }
-    #   register: sqlserver_module
-    #   changed_when: "'installed' in sqlserver_module.stdout"
+      ansible.windows.win_shell: >-
+        [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
+        if (-not (Get-Module -ListAvailable -Name SqlServer)) {
+        Install-Module -Name SqlServer -Force -AllowClobber -Scope AllUsers;
+        Write-Output 'installed' }
+      register: sqlserver_module
+      changed_when: "'installed' in sqlserver_module.stdout"
 
-    # - name: Assert the SqlServer module is present on the VM
-    #   ansible.windows.win_shell: >-
-    #     if (Get-Module -ListAvailable -Name SqlServer) { Write-Output 'present' }
-    #     else { throw 'SqlServer module not found after install' }
-    #   register: sqlserver_present
-    #   changed_when: false
+    - name: Assert the SqlServer module is present on the VM
+      ansible.windows.win_shell: >-
+        if (Get-Module -ListAvailable -Name SqlServer) { Write-Output 'present' }
+        else { throw 'SqlServer module not found after install' }
+      register: sqlserver_present
+      changed_when: false
 
     # =====================================================
     # READINESS CANARY — a freshly-installed engine can have TCP 1433 open while
@@ -303,18 +643,18 @@
     # whose Invoke-Sqlcmd defaults to -Encrypt Mandatory and validates the
     # server certificate; SQL Server's self-signed cert is untrusted, so every
     # Invoke-Sqlcmd needs -TrustServerCertificate.
-    # =====================================================
-    # - name: Wait until SQL Server accepts client logins
-    #   ansible.windows.win_shell: >-
-    #     Import-Module SqlServer;
-    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-    #     | Select-Object -ExpandProperty ok
-    #   register: sql_ready
-    #   changed_when: false
-    #   retries: 12
-    #   delay: 10
-    #   until: sql_ready is succeeded
+    # # =====================================================
+    - name: Wait until SQL Server accepts client logins
+      ansible.windows.win_shell: >-
+        Import-Module SqlServer;
+        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+        | Select-Object -ExpandProperty ok
+      register: sql_ready
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: sql_ready is succeeded
 
     # =====================================================
     # DEFAULT DATABASE FILE LOCATIONS — new databases/backups land in the
@@ -323,99 +663,99 @@
     # install + readiness canary (it uses Invoke-Sqlcmd). win_regedit and the
     # tempdb check are idempotent, so the restart only fires on first apply.
     # =====================================================
-    # - name: Ensure the per-drive SQL default directories exist
-    #   ansible.windows.win_file:
-    #     path: "{{ item }}"
-    #     state: directory
-    #   loop: "{{ sql_drive_dirs }}"
+    - name: Ensure the per-drive SQL default directories exist
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop: "{{ sql_drive_dirs }}"
 
-    # - name: Grant the SQL admin and service account full control over the SQL folders
-    #   ansible.windows.win_acl:
-    #     path: "{{ item.0 }}"
-    #     user: "{{ item.1 }}"
-    #     rights: FullControl
-    #     type: allow
-    #     state: present
-    #     inherit: ContainerInherit, ObjectInherit
-    #     propagation: None
-    #   loop: "{{ sql_drive_dirs | product(sql_drive_acl_users) | list }}"
-    #   loop_control:
-    #     label: "{{ item.1 }} -> {{ item.0 }}"
+    - name: Grant the SQL admin and service account full control over the SQL folders
+      ansible.windows.win_acl:
+        path: "{{ item.0 }}"
+        user: "{{ item.1 }}"
+        rights: FullControl
+        type: allow
+        state: present
+        inherit: ContainerInherit, ObjectInherit
+        propagation: None
+      loop: "{{ sql_drive_dirs | product(sql_drive_acl_users) | list }}"
+      loop_control:
+        label: "{{ item.1 }} -> {{ item.0 }}"
 
-    # - name: Set SQL Server default data/log/backup directories
-    #   ansible.windows.win_regedit:
-    #     path: "{{ sql_instance_reg_path }}"
-    #     name: "{{ item.name }}"
-    #     data: "{{ item.data }}"
-    #     type: string
-    #   loop:
-    #     - { name: DefaultData, data: "{{ sql_default_data_dir }}" }
-    #     - { name: DefaultLog, data: "{{ sql_default_log_dir }}" }
-    #     - { name: BackupDirectory, data: "{{ sql_backup_dir }}" }
-    #   loop_control:
-    #     label: "{{ item.name }} -> {{ item.data }}"
-    #   register: sql_default_dirs
+    - name: Set SQL Server default data/log/backup directories
+      ansible.windows.win_regedit:
+        path: "{{ sql_instance_reg_path }}"
+        name: "{{ item.name }}"
+        data: "{{ item.data }}"
+        type: string
+      loop:
+        - { name: DefaultData, data: "{{ sql_default_data_dir }}" }
+        - { name: DefaultLog, data: "{{ sql_default_log_dir }}" }
+        - { name: BackupDirectory, data: "{{ sql_backup_dir }}" }
+      loop_control:
+        label: "{{ item.name }} -> {{ item.data }}"
+      register: sql_default_dirs
 
-    # - name: Point tempdb files at the dedicated tempdb drive
-    #   ansible.windows.win_shell: |
-    #     $ErrorActionPreference = 'Stop'
-    #     Import-Module SqlServer
-    #     $target = '{{ sql_tempdb_dir }}'
-    #     $files = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-    #       -Query "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID('tempdb')"
-    #     foreach ($f in $files) {
-    #       if ((Split-Path $f.physical_name -Parent) -ne $target) {
-    #         $newPath = Join-Path $target (Split-Path $f.physical_name -Leaf)
-    #         Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-    #           -Query "ALTER DATABASE tempdb MODIFY FILE (NAME = N'$($f.name)', FILENAME = N'$newPath');"
-    #         Write-Output $f.physical_name   # emit the OLD path (one per line) for cleanup
-    #       }
-    #     }
-    #   register: tempdb_files
-    #   changed_when: "(tempdb_files.stdout | trim | length) > 0"
+    - name: Point tempdb files at the dedicated tempdb drive
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module SqlServer
+        $target = '{{ sql_tempdb_dir }}'
+        $files = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+          -Query "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID('tempdb')"
+        foreach ($f in $files) {
+          if ((Split-Path $f.physical_name -Parent) -ne $target) {
+            $newPath = Join-Path $target (Split-Path $f.physical_name -Leaf)
+            Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+              -Query "ALTER DATABASE tempdb MODIFY FILE (NAME = N'$($f.name)', FILENAME = N'$newPath');"
+            Write-Output $f.physical_name   # emit the OLD path (one per line) for cleanup
+          }
+        }
+      register: tempdb_files
+      changed_when: "(tempdb_files.stdout | trim | length) > 0"
 
-    # # Restart only when the registry defaults or tempdb file paths actually
-    # # changed (idempotent — skipped once converged). The ACL grants above ensure
-    # # the engine service account can open tempdb at its new path, so the service
-    # # comes back online instead of failing to start (per "Move system databases").
-    # - name: Restart SQL Server to apply the new default directories
-    #   ansible.windows.win_service:
-    #     name: MSSQLSERVER
-    #     state: restarted
-    #   register: sql_restart
-    #   when: >-
-    #     (sql_default_dirs is defined and sql_default_dirs is changed)
-    #     or (tempdb_files is defined and tempdb_files is changed)
+    # Restart only when the registry defaults or tempdb file paths actually
+    # changed (idempotent — skipped once converged). The ACL grants above ensure
+    # the engine service account can open tempdb at its new path, so the service
+    # comes back online instead of failing to start (per "Move system databases").
+    - name: Restart SQL Server to apply the new default directories
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: restarted
+      register: sql_restart
+      when: >-
+        (sql_default_dirs is defined and sql_default_dirs is changed)
+        or (tempdb_files is defined and tempdb_files is changed)
 
-    # # Always confirm the engine is actually accepting logins before continuing —
-    # # ungated so every deployment validates SQL is healthy (and a prior
-    # # half-applied run surfaces here instead of failing cryptically later).
-    # # changed_when:false keeps it idempotent.
-    # - name: Verify SQL Server is online after applying file-location changes
-    #   ansible.windows.win_shell: >-
-    #     Import-Module SqlServer;
-    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-    #     | Select-Object -ExpandProperty ok
-    #   register: sql_ready_post
-    #   changed_when: false
-    #   retries: 18
-    #   delay: 10
-    #   until: sql_ready_post is succeeded
+    # Always confirm the engine is actually accepting logins before continuing —
+    # ungated so every deployment validates SQL is healthy (and a prior
+    # half-applied run surfaces here instead of failing cryptically later).
+    # changed_when:false keeps it idempotent.
+    - name: Verify SQL Server is online after applying file-location changes
+      ansible.windows.win_shell: >-
+        Import-Module SqlServer;
+        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+        | Select-Object -ExpandProperty ok
+      register: sql_ready_post
+      changed_when: false
+      retries: 18
+      delay: 10
+      until: sql_ready_post is succeeded
 
-    # # After the restart, tempdb is recreated on the new drive and SQL has released
-    # # the old files — delete the now-orphaned tempdb files from the previous
-    # # location. Guarded so it only runs when a move happened AND the engine is
-    # # confirmed back online (so the old files are unlocked). Skipped on reruns.
-    # - name: Remove the orphaned tempdb files from the previous location
-    #   ansible.windows.win_file:
-    #     path: "{{ item }}"
-    #     state: absent
-    #   loop: "{{ (tempdb_files.stdout_lines | default([])) | map('trim') | reject('equalto', '') | list }}"
-    #   when:
-    #     - tempdb_files is defined
-    #     - tempdb_files is changed
-    #     - sql_ready_post is succeeded
+    # After the restart, tempdb is recreated on the new drive and SQL has released
+    # the old files — delete the now-orphaned tempdb files from the previous
+    # location. Guarded so it only runs when a move happened AND the engine is
+    # confirmed back online (so the old files are unlocked). Skipped on reruns.
+    - name: Remove the orphaned tempdb files from the previous location
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ (tempdb_files.stdout_lines | default([])) | map('trim') | reject('equalto', '') | list }}"
+      when:
+        - tempdb_files is defined
+        - tempdb_files is changed
+        - sql_ready_post is succeeded
 
     # =====================================================
     # ADD ENGINE FEATURES TO AN EXISTING INSTANCE (idempotent)
@@ -424,128 +764,128 @@
     # the setup media, re-acquired here if absent (the media section above is
     # skipped once the engine exists).
     # =====================================================
-    # - name: Detect which optional engine features are installed
-    #   ansible.windows.win_shell: |
-    #     $ErrorActionPreference = 'Stop'
-    #     Import-Module SqlServer
-    #     $ft = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
-    #       -Query "SELECT CAST(SERVERPROPERTY('IsFullTextInstalled') AS int) AS v").v
-    #     $repl = 0
-    #     $rk = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\ConfigurationState'
-    #     if (Test-Path $rk) {
-    #       $p = Get-ItemProperty -Path $rk
-    #       if (($p.PSObject.Properties.Name -contains 'SQL_Replication_Core_Inst') -and $p.SQL_Replication_Core_Inst -eq 1) { $repl = 1 }
-    #     }
-    #     $missing = @()
-    #     if ($ft -ne 1)   { $missing += 'FULLTEXT' }
-    #     if ($repl -ne 1) { $missing += 'REPLICATION' }
-    #     ($missing -join ',')
-    #   register: missing_features
-    #   changed_when: false
+    - name: Detect which optional engine features are installed
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module SqlServer
+        $ft = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+          -Query "SELECT CAST(SERVERPROPERTY('IsFullTextInstalled') AS int) AS v").v
+        $repl = 0
+        $rk = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\ConfigurationState'
+        if (Test-Path $rk) {
+          $p = Get-ItemProperty -Path $rk
+          if (($p.PSObject.Properties.Name -contains 'SQL_Replication_Core_Inst') -and $p.SQL_Replication_Core_Inst -eq 1) { $repl = 1 }
+        }
+        $missing = @()
+        if ($ft -ne 1)   { $missing += 'FULLTEXT' }
+        if ($repl -ne 1) { $missing += 'REPLICATION' }
+        ($missing -join ',')
+      register: missing_features
+      changed_when: false
 
-    # - name: Re-acquire setup media for the feature add (only when features are missing)
-    #   when: (missing_features.stdout | trim) | length > 0
-    #   block:
-    #     - name: Stat the extracted setup for the feature add
-    #       ansible.windows.win_stat:
-    #         path: "{{ sql_setup_path }}"
-    #       register: featadd_setup_stat
+    - name: Re-acquire setup media for the feature add (only when features are missing)
+      when: (missing_features.stdout | trim) | length > 0
+      block:
+        - name: Stat the extracted setup for the feature add
+          ansible.windows.win_stat:
+            path: "{{ sql_setup_path }}"
+          register: featadd_setup_stat
 
-    #     - name: Download the bootstrapper for the feature add
-    #       ansible.windows.win_get_url:
-    #         url: "{{ sql_installer_url }}"
-    #         dest: "{{ sql_ssei_path }}"
-    #         force: false
-    #       when: not (featadd_setup_stat.stat.exists | default(false))
+        - name: Download the bootstrapper for the feature add
+          ansible.windows.win_get_url:
+            url: "{{ sql_installer_url }}"
+            dest: "{{ sql_ssei_path }}"
+            force: false
+          when: not (featadd_setup_stat.stat.exists | default(false))
 
-    #     - name: Download the media (CAB) for the feature add
-    #       ansible.windows.win_command: >-
-    #         "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
-    #         /MEDIAPATH={{ sql_media_dir }} /QUIET
-    #       args:
-    #         creates: "{{ sql_box_exe }}"
-    #       when: not (featadd_setup_stat.stat.exists | default(false))
+        - name: Download the media (CAB) for the feature add
+          ansible.windows.win_command: >-
+            "{{ sql_ssei_path }}" /ACTION=Download /MEDIATYPE=CAB
+            /MEDIAPATH={{ sql_media_dir }} /QUIET
+          args:
+            creates: "{{ sql_box_exe }}"
+          when: not (featadd_setup_stat.stat.exists | default(false))
 
-    #     - name: Extract the media for the feature add
-    #       ansible.windows.win_command: >-
-    #         "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
-    #       args:
-    #         creates: "{{ sql_setup_path }}"
-    #       when: not (featadd_setup_stat.stat.exists | default(false))
+        - name: Extract the media for the feature add
+          ansible.windows.win_command: >-
+            "{{ sql_box_exe }}" /qs /x:{{ sql_media_dir }}\setup
+          args:
+            creates: "{{ sql_setup_path }}"
+          when: not (featadd_setup_stat.stat.exists | default(false))
 
-    # - name: Add the missing engine features (Replication / Full-Text)
-    #   ansible.windows.win_command: >-
-    #     "{{ sql_setup_path }}" /Q /ACTION=Install
-    #     /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
-    #     /INSTANCENAME=MSSQLSERVER /FEATURES={{ missing_features.stdout | trim }}
-    #   register: feature_add
-    #   changed_when: feature_add.rc == 0
-    #   when: (missing_features.stdout | trim) | length > 0
+    - name: Add the missing engine features (Replication / Full-Text)
+      ansible.windows.win_command: >-
+        "{{ sql_setup_path }}" /Q /ACTION=Install
+        /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
+        /INSTANCENAME=MSSQLSERVER /FEATURES={{ missing_features.stdout | trim }}
+      register: feature_add
+      changed_when: feature_add.rc == 0
+      when: (missing_features.stdout | trim) | length > 0
 
-    # - name: Ensure the Full-Text filter daemon service is running and auto-start
-    #   ansible.windows.win_service:
-    #     name: MSSQLFDLauncher
-    #     state: started
-    #     start_mode: auto
-    #   failed_when: false   # service only exists once Full-Text is installed
+    - name: Ensure the Full-Text filter daemon service is running and auto-start
+      ansible.windows.win_service:
+        name: MSSQLFDLauncher
+        state: started
+        start_mode: auto
+      failed_when: false   # service only exists once Full-Text is installed
 
     # =====================================================
     # INSTANT FILE INITIALIZATION (the "Perform Volume Maintenance Task" checkbox)
     # Grant SeManageVolumePrivilege to the engine service account; effective after
     # a restart. Idempotent (win_user_right add-only); restart only when granted.
     # =====================================================
-    # - name: Grant Perform Volume Maintenance Task to the SQL service (Instant File Init)
-    #   ansible.windows.win_user_right:
-    #     name: SeManageVolumePrivilege
-    #     users:
-    #       - 'NT SERVICE\MSSQLSERVER'
-    #     action: add
-    #   register: ifi_right
+    - name: Grant Perform Volume Maintenance Task to the SQL service (Instant File Init)
+      ansible.windows.win_user_right:
+        name: SeManageVolumePrivilege
+        users:
+          - 'NT SERVICE\MSSQLSERVER'
+        action: add
+      register: ifi_right
 
-    # - name: Restart SQL Server to apply Instant File Initialization
-    #   ansible.windows.win_service:
-    #     name: MSSQLSERVER
-    #     state: restarted
-    #   when: ifi_right is changed
+    - name: Restart SQL Server to apply Instant File Initialization
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: restarted
+      when: ifi_right is changed
 
-    # - name: Verify SQL Server is online after the IFI restart
-    #   ansible.windows.win_shell: >-
-    #     Import-Module SqlServer;
-    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
-    #     -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
-    #     | Select-Object -ExpandProperty ok
-    #   register: ifi_ready
-    #   changed_when: false
-    #   retries: 18
-    #   delay: 10
-    #   until: ifi_ready is succeeded
-    #   when: ifi_right is changed
+    - name: Verify SQL Server is online after the IFI restart
+      ansible.windows.win_shell: >-
+        Import-Module SqlServer;
+        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+        -ConnectionTimeout 5 -Query "SELECT 1 AS ok"
+        | Select-Object -ExpandProperty ok
+      register: ifi_ready
+      changed_when: false
+      retries: 18
+      delay: 10
+      until: ifi_ready is succeeded
+      when: ifi_right is changed
 
     # =====================================================
     # MAXDOP + COST THRESHOLD FOR PARALLELISM (best practice, idempotent)
     # MaxDOP = min(8, logical CPUs); cost threshold = 50. Only RECONFIGUREs on drift.
     # =====================================================
-    # - name: Apply MaxDOP and cost threshold for parallelism
-    #   ansible.windows.win_shell: |
-    #     $ErrorActionPreference = 'Stop'
-    #     Import-Module SqlServer
-    #     $changed = $false
-    #     Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'show advanced options',1; RECONFIGURE;" | Out-Null
-    #     $cpu = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT cpu_count AS c FROM sys.dm_os_sys_info").c
-    #     $maxdop = [Math]::Min(8, [int]$cpu)
-    #     $curMaxdop = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'max degree of parallelism'").v
-    #     if ([int]$curMaxdop -ne $maxdop) {
-    #       Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'max degree of parallelism', $maxdop; RECONFIGURE;" | Out-Null
-    #       $changed = $true
-    #     }
-    #     $curCost = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'cost threshold for parallelism'").v
-    #     if ([int]$curCost -ne 50) {
-    #       Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'cost threshold for parallelism', 50; RECONFIGURE;" | Out-Null
-    #       $changed = $true
-    #     }
-    #     if ($changed) { Write-Output 'CHANGED' } else { Write-Output 'OK' }
-    #   register: maxdop_result
-    #   changed_when: "'CHANGED' in maxdop_result.stdout"
+    - name: Apply MaxDOP and cost threshold for parallelism
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module SqlServer
+        $changed = $false
+        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'show advanced options',1; RECONFIGURE;" | Out-Null
+        $cpu = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT cpu_count AS c FROM sys.dm_os_sys_info").c
+        $maxdop = [Math]::Min(8, [int]$cpu)
+        $curMaxdop = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'max degree of parallelism'").v
+        if ([int]$curMaxdop -ne $maxdop) {
+          Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'max degree of parallelism', $maxdop; RECONFIGURE;" | Out-Null
+          $changed = $true
+        }
+        $curCost = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "SELECT CONVERT(int, value_in_use) AS v FROM sys.configurations WHERE name = 'cost threshold for parallelism'").v
+        if ([int]$curCost -ne 50) {
+          Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -Query "EXEC sp_configure 'cost threshold for parallelism', 50; RECONFIGURE;" | Out-Null
+          $changed = $true
+        }
+        if ($changed) { Write-Output 'CHANGED' } else { Write-Output 'OK' }
+      register: maxdop_result
+      changed_when: "'CHANGED' in maxdop_result.stdout"
 
     # =====================================================
     # AUTOGROWTH BEST PRACTICE (idempotent) — fixed 256 MB on model + tempdb so new
@@ -595,22 +935,197 @@
       until: sa_result is succeeded
       no_log: true
 
+    # =====================================================
+    # RESTORE THE ADVENTUREWORKS2017 SAMPLE DATABASE
+    # The DP-300 lab archive (extracted to {{ sql_media_dir }}) ships
+    # AdventureWorks2017.bak. Restore it onto the dedicated SQL drives — the data
+    # file lands on the DATA disk ({{ sql_default_data_dir }}) and the log file on
+    # the LOG disk ({{ sql_default_log_dir }}). Two things keep the restore from
+    # breaking: (1) the .bak path is DISCOVERED at runtime, so FROM DISK always
+    # matches wherever the archive actually extracted; (2) the logical file names
+    # and their types (D=data, L=log) are read from the backup header with
+    # RESTORE FILELISTONLY, so the MOVE clauses are correct regardless of the
+    # logical names. Idempotent: skipped when the database already exists.
+    # =====================================================
+    - name: Locate the AdventureWorks2017 backup inside the extracted lab files
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $bak = Get-ChildItem -Path '{{ sql_media_dir }}' -Recurse -Filter '{{ adventureworks_bak_name }}' -ErrorAction SilentlyContinue |
+          Select-Object -First 1
+        if ($bak) { $bak.FullName } else { '' }
+      register: aw_bak_path
+      changed_when: false
+      when: lab_blob_sas_url | length > 0
+
+    - name: Fail if the AdventureWorks2017 backup was not found in the lab files
+      ansible.builtin.fail:
+        msg: >-
+          {{ adventureworks_bak_name }} was not found anywhere under
+          {{ sql_media_dir }}. The DP-300 lab archive may not have extracted, or
+          the backup name differs — check the 'Extract DP-300 lab archive' task.
+      when:
+        - lab_blob_sas_url | length > 0
+        - (aw_bak_path.stdout | default('') | trim) | length == 0
+
+    - name: Restore AdventureWorks2017 onto the data/log SQL drives
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module SqlServer
+        $db      = '{{ adventureworks_db_name }}'
+        $bak     = '{{ aw_bak_path.stdout | default("") | trim }}'
+        $dataDir = '{{ sql_default_data_dir }}'
+        $logDir  = '{{ sql_default_log_dir }}'
+
+        # Idempotent: skip if the database already exists.
+        $exists = (Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+          -Query "SELECT COUNT(*) AS n FROM sys.databases WHERE name = N'$db'").n
+        if ([int]$exists -gt 0) {
+          Write-Output 'OK'
+        } else {
+          # Read logical names + types from the backup header so the MOVE clauses
+          # are always correct: data files -> data drive, log files -> log drive.
+          $files = Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate `
+            -Query "RESTORE FILELISTONLY FROM DISK = N'$bak'"
+          $seenData = $false
+          $moves = foreach ($f in $files) {
+            if ($f.Type -eq 'L') {
+              $dest = Join-Path $logDir ($f.LogicalName + '.ldf')
+            } elseif (-not $seenData) {
+              $dest = Join-Path $dataDir ($f.LogicalName + '.mdf'); $seenData = $true
+            } else {
+              $dest = Join-Path $dataDir ($f.LogicalName + '.ndf')
+            }
+            "MOVE N'$($f.LogicalName)' TO N'$dest'"
+          }
+          $moveClause = $moves -join ', '
+          $sql = "RESTORE DATABASE [$db] FROM DISK = N'$bak' WITH RECOVERY, REPLACE, $moveClause"
+          Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate -QueryTimeout 0 -Query $sql
+          Write-Output 'CHANGED'
+        }
+      register: aw_restore
+      changed_when: "'CHANGED' in aw_restore.stdout"
+      when:
+        - lab_blob_sas_url | length > 0
+        - (aw_bak_path.stdout | default('') | trim) | length > 0
+
+    - name: Verify AdventureWorks2017 is online with files on the data/log drives
+      ansible.windows.win_shell: >-
+        Import-Module SqlServer;
+        Invoke-Sqlcmd -ServerInstance localhost -TrustServerCertificate
+        -Query "SELECT mf.name, mf.physical_name, mf.type_desc
+        FROM sys.master_files mf
+        WHERE mf.database_id = DB_ID(N'{{ adventureworks_db_name }}')"
+        | Format-Table -AutoSize | Out-String
+      register: aw_files_check
+      changed_when: false
+      when:
+        - lab_blob_sas_url | length > 0
+        - (aw_bak_path.stdout | default('') | trim) | length > 0
+
+    - name: Show the AdventureWorks2017 file locations
+      ansible.builtin.debug:
+        var: aw_files_check.stdout_lines
+      when:
+        - lab_blob_sas_url | length > 0
+        - (aw_bak_path.stdout | default('') | trim) | length > 0
 
     # =====================================================
-    # INSTALL SQL SERVER MANAGEMENT STUDIO (SSMS)
+    # SECTION — ALWAYS ON / HADR ENABLEMENT
+    # -----------------------------------------------------
+    # RELOCATED from the top of this play (it used to sit in "SECTION 0" before
+    # the engine was even installed). That was a dependency inversion: enabling
+    # HADR and creating the mirroring endpoint require ALL of the following, which
+    # only exist by this point in the play:
+    #   • the engine installed + running              (engine install + start)
+    #   • the SqlServer PowerShell module present      (Enable-SqlAlwaysOn,
+    #                                                    Invoke-Sqlcmd)
+    #   • the instance configured (file locations,     (so the restart below comes
+    #     features, MaxDOP, logins)                     back online cleanly)
+    #
+    # Execution order:
+    #   1. Enable Always On Availability Groups (requires a SQL Server restart)
+    #   2. Restart SQL Server if Always On was just enabled
+    #   3. Wait for SQL Server to accept connections after the restart
+    #   4. Create the HADR mirroring endpoint on port {{ hadr_endpoint_port }}
+    #   5. Verify Always On is active — fail execution if not
+    #
+    # Why enable Always On before creating the endpoint:
+    #   CREATE ENDPOINT ... FOR DATABASE_MIRRORING requires the HADR subsystem to
+    #   be active. Enabling Always On activates it (after the restart). Attempting
+    #   to create the endpoint on an instance where IsHadrEnabled=0 raises
+    #   SQL Error 1412 ("HADR is not enabled on this SQL Server instance").
+    #
+    # Cross-node certificate trust for a workgroup (no-AD) cluster:
+    #   The endpoint created here uses default WINDOWS NEGOTIATE authentication.
+    #   In a no-AD workgroup cluster, cross-node trust requires certificate-based
+    #   HADR endpoints. That cert-exchange step (CREATE CERTIFICATE, BACKUP, copy,
+    #   RESTORE on peer, GRANT CONNECT) is performed separately after the cluster
+    #   is formed — it is not automated here because it requires coordinated
+    #   access to both nodes during cluster setup.
     # =====================================================
-    - name: Download the SSMS installer
-      ansible.windows.win_get_url:
-        url: "{{ ssms_installer_url }}"
-        dest: "{{ ssms_installer_path }}"
-        force: false
+    - name: Enable Always On Availability Groups
+      ansible.windows.win_shell: |
+        Import-Module SqlServer -ErrorAction Stop
+        $inst = Get-Item "SQLSERVER:\SQL\localhost\DEFAULT" -ErrorAction Stop
+        if ($inst.IsHadrEnabled) {
+          Write-Output "ALREADY_ENABLED"
+        } else {
+          Enable-SqlAlwaysOn -ServerInstance "localhost" -Force
+          Write-Output "ENABLED"
+        }
+      register: hadr_enable
+      changed_when: "'ENABLED' in hadr_enable.stdout"
 
-    - name: Install SSMS silently
-      ansible.windows.win_package:
-        path: "{{ ssms_installer_path }}"
-        arguments: /Install /Quiet /Norestart
-        creates_path: "{{ ssms_exe_path }}"
-        state: present
+    - name: Restart SQL Server after enabling Always On
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: restarted
+      when: hadr_enable.changed
+
+    - name: Wait for SQL Server to accept connections after Always On restart
+      ansible.windows.win_shell: |
+        $retries = 0
+        do {
+          try {
+            Invoke-Sqlcmd -Query "SELECT 1" -TrustServerCertificate -ErrorAction Stop
+            Write-Output "READY"
+            break
+          } catch { $retries++; Start-Sleep -Seconds 10 }
+        } while ($retries -lt 18)
+        if ($retries -ge 18) { throw "SQL Server did not come online after 180 s" }
+      changed_when: false
+      when: hadr_enable.changed
+
+    - name: "Create Always On HADR endpoint on port {{ hadr_endpoint_port }}"
+      ansible.windows.win_shell: |
+        $epName = '{{ hadr_endpoint_name }}'
+        $epPort = {{ hadr_endpoint_port }}
+        $check = Invoke-Sqlcmd -TrustServerCertificate -Query `
+          "SELECT name FROM sys.endpoints WHERE type_desc = 'DATABASE_MIRRORING' AND name = '$epName'"
+        if ($check) {
+          Write-Output "EXISTS"
+        } else {
+          $sql = "CREATE ENDPOINT [$epName] STATE = STARTED " +
+                 "AS TCP (LISTENER_PORT = $epPort, LISTENER_IP = ALL) " +
+                 "FOR DATABASE_MIRRORING (ROLE = ALL, ENCRYPTION = REQUIRED ALGORITHM AES);"
+          Invoke-Sqlcmd -TrustServerCertificate -Query $sql
+          Write-Output "CREATED"
+        }
+      register: hadr_ep
+      changed_when: "'CREATED' in hadr_ep.stdout"
+
+    - name: Verify Always On Availability Groups is enabled
+      ansible.windows.win_shell: |
+        $result = Invoke-Sqlcmd -Query `
+          "SELECT SERVERPROPERTY('IsHadrEnabled') AS IsHadrEnabled" `
+          -TrustServerCertificate
+        if ([int]$result.IsHadrEnabled -ne 1) {
+          throw "Always On Availability Groups is NOT enabled on this instance."
+        }
+        Write-Output "HADR_ENABLED=1"
+      register: hadr_verify
+      changed_when: false
+      failed_when: "'HADR_ENABLED=1' not in hadr_verify.stdout"
 
     # =====================================================
     # VERIFY CONNECTIVITY — engine responds, SQL-auth login authenticates,

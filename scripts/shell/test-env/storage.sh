@@ -1,3 +1,4 @@
+#!/bin/bash
 set -euo pipefail
 source "$(dirname "$0")/env.conf"
 
@@ -34,118 +35,59 @@ else
         --https-only true \
         --min-tls-version "$MIN_TLS_VERSION" \
         --allow-blob-public-access false \
-        --default-action "$DEFAULT_NETWORK_ACTION" \
+        --default-action Allow \
+        --public-network-access "$PUBLIC_NETWORK_ACCESS" \
         --allow-shared-key-access true \
         --bypass AzureServices
-
-fi
-
-if az storage container show \
-    --name "$CONTAINER_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    >/dev/null 2>&1; then
-
-    echo "Container already exists."
-
-else
-
-    echo "Creating container..."
-    az storage container create \
-    --account-name "$STORAGE_ACCOUNT_NAME" \
-    --name "$CONTAINER_NAME" \
-    --public-access off
-
-fi
-
-if az storage container show \
-    --name "$XEVENT_CONTAINER_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    >/dev/null 2>&1; then
-
-    echo "XEvent container already exists."
-
-else
-
-    echo "Creating XEvent container..."
-    az storage container create \
-    --account-name "$STORAGE_ACCOUNT_NAME" \
-    --name "$XEVENT_CONTAINER_NAME" \
-    --public-access off
+    # Created OPEN (default-action Allow) so the control-node data-plane calls
+    # below succeed; locked to $DEFAULT_NETWORK_ACTION as the final step.
 
 fi
 
 # =========================================================
+# RETRIEVE ACCOUNT KEY (used by every data-plane call below)
+# =========================================================
+# Fetched once, right after the account is ensured, so the container/policy
+# operations authenticate with the key consistently (no reliance on AAD
+# data-plane RBAC, which the sandbox user may not hold).
+STORAGE_ACCOUNT_KEY=$(az storage account keys list \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --query "[0].value" \
+    -o tsv)
 
-# PUBLIC NETWORK ACCESS
+if [ -z "$STORAGE_ACCOUNT_KEY" ]; then
+    echo "ERROR: could not retrieve the primary key for $STORAGE_ACCOUNT_NAME." >&2
+    exit 1
+fi
 
 # =========================================================
-
-echo "=================================================="
-
-echo "CONFIGURE PUBLIC NETWORK ACCESS"
-
-echo "=================================================="
-
-az storage account update \
+# OPEN THE FIREWALL FOR PROVISIONING
+# ---------------------------------------------------------
+# The container/policy operations below are control-node DATA-PLANE calls, which
+# the storage firewall blocks unless default-action is Allow. Open it now and
+# re-lock to $DEFAULT_NETWORK_ACTION as the FINAL step. Fresh accounts were just
+# created with Allow, so this only acts (and waits) when re-running against an
+# account that is already locked down. The 'show'/'update' here are control-plane
+# (ARM) calls, so they are not themselves subject to the data-plane firewall.
+# =========================================================
+current_action=$(az storage account show \
     --name "$STORAGE_ACCOUNT_NAME" \
     --resource-group "$RESOURCE_GROUP" \
-    --public-network-access Enabled \
-    --bypass AzureServices
+    --query "networkRuleSet.defaultAction" \
+    -o tsv)
 
-# =========================================================
-
-# CHECK VNET
-
-# # =========================================================
-
-# echo "=================================================="
-
-# echo "CHECK VNET"
-
-# echo "=================================================="
-
-# if az network vnet show \
-#     --resource-group "$RESOURCE_GROUP" \
-#     --name "$VNET_NAME" \
-#     >/dev/null 2>&1; then
-
-#     echo "VNet exists."
-
-# else
-
-#     echo "ERROR: VNet does not exist."
-
-#     exit 1
-
-# fi
-
-# # =========================================================
-
-# # CHECK SUBNET
-
-# # =========================================================
-
-# echo "=================================================="
-
-# echo "CHECK SUBNET"
-
-# echo "=================================================="
-
-# if az network vnet subnet show \
-#     --resource-group "$RESOURCE_GROUP" \
-#     --vnet-name "$VNET_NAME" \
-#     --name "$SUBNET_NAME" \
-#     >/dev/null 2>&1; then
-
-#     echo "Subnet exists."
-
-# else
-
-#     echo "ERROR: Subnet does not exist."
-
-#     exit 1
-
-# fi
+if [ "$current_action" = "Deny" ]; then
+    echo "Opening storage firewall for provisioning..."
+    az storage account update \
+        --name "$STORAGE_ACCOUNT_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --default-action Allow \
+        --public-network-access "$PUBLIC_NETWORK_ACCESS" \
+        --output none
+    echo "Waiting up to 60s for the firewall change to propagate (Azure: 'up to a minute')..."
+    sleep 60
+fi
 
 # =========================================================
 
@@ -182,43 +124,99 @@ else
 
 fi
 
+
+
+if az storage container show \
+    --name "$CONTAINER_NAME" \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
+    >/dev/null 2>&1; then
+
+    echo "Container already exists."
+
+else
+
+    echo "Creating container..."
+    az storage container create \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --name "$CONTAINER_NAME" \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
+    --public-access off
+
+fi
+
 # =========================================================
+# UPLOAD THE DP-300 LAB ARCHIVE (account key) -> sqlbackups
+# =========================================================
+# Upload with the storage account key (no SAS needed to write). The Windows VMs
+# later DOWNLOAD this blob via a short-lived SAS minted in vm-stg-ind-103.sh and
+# passed to the Ansible playbook. --overwrite keeps re-runs idempotent.
+# (STORAGE_ACCOUNT_KEY was retrieved right after the account was ensured, above.)
+if [ ! -f "$LOCAL_FILE_PATH" ]; then
+    echo "ERROR: upload file not found: $LOCAL_FILE_PATH" >&2
+    exit 1
+fi
 
-# CHECK VNET RULE
+echo "Uploading $BLOB_NAME to container $CONTAINER_NAME ..."
+az storage blob upload \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --container-name "$CONTAINER_NAME" \
+    --name "$BLOB_NAME" \
+    --file "$LOCAL_FILE_PATH" \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
+    --overwrite
+
+if az storage container show \
+    --name "$XEVENT_CONTAINER_NAME" \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
+    >/dev/null 2>&1; then
+
+    echo "XEvent container already exists."
+
+else
+
+    echo "Creating XEvent container..."
+    az storage container create \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --name "$XEVENT_CONTAINER_NAME" \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
+    --public-access off
+
+fi
 
 # =========================================================
+# CHECK VNET RULES
+# ---------------------------------------------------------
+# Allow both subnets so the Linux VM (SUBNET_NAME) and the Windows SQL cluster
+# nodes (WIN_SUBNET_NAME) can reach the storage account. The Windows subnet rule
+# is required for Cloud Witness: WSFC nodes call Azure Blob from inside the VNet.
+# Prerequisite: each subnet must have the Microsoft.Storage service endpoint
+# enabled (network.sh adds it to WIN_SUBNET_NAME; SUBNET_NAME already had it).
+# =========================================================
+echo "=================================================="
+echo "CHECK VNET RULES"
+echo "=================================================="
 
-# echo "=================================================="
-
-# echo "CHECK VNET RULE"
-
-# echo "=================================================="
-
-# existing_vnet_rule=$(
-
-#     az storage account network-rule list \
-#         --resource-group "$RESOURCE_GROUP" \
-#         --account-name "$STORAGE_ACCOUNT_NAME" \
-#         --query "virtualNetworkRules[?contains(virtualNetworkResourceId, '$SUBNET_NAME')]" \
-#         -o tsv
-
-# )
-
-# if [ -n "$existing_vnet_rule" ]; then
-
-#     echo "VNet rule already exists."
-
-# else
-
-#     echo "Adding VNet rule..."
-
-#     az storage account network-rule add \
-#         --resource-group "$RESOURCE_GROUP" \
-#         --account-name "$STORAGE_ACCOUNT_NAME" \
-#         --vnet-name "$VNET_NAME" \
-#         --subnet "$SUBNET_NAME"
-
-# fi
+for SUBNET in "$WIN_SUBNET_NAME" "$SUBNET_NAME"; do
+    existing_vnet_rule=$(
+        az storage account network-rule list \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --query "virtualNetworkRules[?contains(virtualNetworkResourceId, '${SUBNET}')]" \
+            -o tsv
+    )
+    if [ -n "$existing_vnet_rule" ]; then
+        echo "VNet rule already exists for subnet $SUBNET."
+    else
+        echo "Adding VNet rule for subnet $SUBNET..."
+        az storage account network-rule add \
+            --resource-group "$RESOURCE_GROUP" \
+            --account-name "$STORAGE_ACCOUNT_NAME" \
+            --vnet-name "$VNET_NAME" \
+            --subnet "$SUBNET"
+    fi
+done
 
 # =========================================================
 
@@ -300,6 +298,7 @@ if az storage container policy show \
     --account-name "$STORAGE_ACCOUNT_NAME" \
     --container-name "$XEVENT_CONTAINER_NAME" \
     --name xevent-policy-v3 \
+    --account-key "$STORAGE_ACCOUNT_KEY" \
     >/dev/null 2>&1; then
 
     echo "XEvent stored access policy already exists."
@@ -311,24 +310,34 @@ else
         --container-name "$XEVENT_CONTAINER_NAME" \
         --name xevent-policy-v3 \
         --permissions racwdl \
-        --expiry 2030-12-31T23:59:00Z
+        --expiry 2030-12-31T23:59:00Z \
+        --account-key "$STORAGE_ACCOUNT_KEY"
 
 fi
 
 
 
 
-STORAGE_ACCOUNT_KEY=$(az storage account keys list \
-    --account-name "$STORAGE_ACCOUNT_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    --query "[0].value" \
-    -o tsv)
+# The XEvent stored access policy above is the deliverable here. The SAS the
+# XEvent database-scoped credential needs is minted where it is consumed, in
+# identity.sh — not here — so no SAS is generated in this script.
 
-SAS=$(az storage container generate-sas \
-    --account-name "$STORAGE_ACCOUNT_NAME" \
-    --name "$XEVENT_CONTAINER_NAME" \
-    --permissions racwdl \
-    --expiry 2030-12-31T23:59:00Z \
-    --https-only \
-    --account-key "$STORAGE_ACCOUNT_KEY" \
-    -o tsv)
+# =========================================================
+# LOCK DOWN THE FIREWALL (FINAL STEP)
+# ---------------------------------------------------------
+# All data-plane provisioning is done and the IP + VNet rules are registered, so
+# switch default-action to $DEFAULT_NETWORK_ACTION now. End-state: public network
+# access Enabled, but reachable only from the client IP, the VM subnets, and
+# trusted Azure services ("reachable but firewalled").
+# =========================================================
+echo "=================================================="
+echo "LOCK DOWN STORAGE FIREWALL ($DEFAULT_NETWORK_ACTION)"
+echo "=================================================="
+
+az storage account update \
+    --name "$STORAGE_ACCOUNT_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --public-network-access "$PUBLIC_NETWORK_ACCESS" \
+    --default-action "$DEFAULT_NETWORK_ACTION" \
+    --bypass AzureServices \
+    --output none

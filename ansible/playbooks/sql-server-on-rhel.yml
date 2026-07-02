@@ -4,25 +4,43 @@
   become: true
   gather_facts: true
 
-  vars_files:
-    - secrets.yml
-
+  # Secrets (SA password) are supplied at runtime via --extra-vars from
+  # scripts/shell/test-env/vm-config.sh. This follows the same pattern as
+  # sql-server-on-windows.yml and keeps the playbook injectable.
   vars:
-    mssql_server_repo_url: "https://packages.microsoft.com/config/rhel/9/mssql-server-2022.repo"
-    mssql_tools_repo_url: "https://packages.microsoft.com/config/rhel/9/prod.repo"
-
-    mssql_server_repo_file: "/etc/yum.repos.d/mssql-server.repo"
-    mssql_tools_repo_file: "/etc/yum.repos.d/msprod.repo"
-
-    mssql_setup_marker: "/var/opt/mssql/.ansible_mssql_setup_done"
-
+    vault_mssql_sa_password: ""
     mssql_sa_password: "{{ vault_mssql_sa_password }}"
     mssql_pid: "Developer"
     sql_database_name: "Success"
-
     sqlcmd_path: "/opt/mssql-tools18/bin/sqlcmd"
+    mssql_setup_marker: "/var/opt/mssql/.ansible_mssql_setup_done"
+    mssql_server_repo_url: "https://packages.microsoft.com/config/rhel/9/mssql-server-2022.repo"
+    mssql_tools_repo_url: "https://packages.microsoft.com/config/rhel/9/prod.repo"
+    mssql_server_repo_file: "/etc/yum.repos.d/mssql-server.repo"
+    mssql_tools_repo_file: "/etc/yum.repos.d/msprod.repo"
+
+    # DP-300 lab archive: the RHEL VM downloads it from Blob Storage via a SAS URL
+    # minted by scripts/shell/test-env/vm-config.sh and passed in with
+    # --extra-vars. Empty default so a standalone run (no SAS) simply skips the
+    # lab download + restore below.
+    lab_blob_sas_url: ""
+    lab_file_name: "dp-300-database-administrator-master.zip"
+    # Staged on the BACKUP drive (/u05); the restore reads the .bak from here.
+    lab_staging_dir: "/u05/labfiles"
+    # AdventureWorks2017 sample DB restored from the lab archive. The .bak is
+    # Windows-origin, so RESTORE MOVEs its files onto the dedicated drives:
+    # data -> /u02 (DATA), log -> /u03 (LOG). Those subdirs are created and owned
+    # by the mssql user so the engine can write the restored files there.
+    adventureworks_db_name: "AdventureWorks2017"
+    adventureworks_bak_name: "AdventureWorks2017.bak"
+    mssql_data_dir: "/u02/sqldata"
+    mssql_log_dir: "/u03/sqllog"
 
   tasks:
+    # =====================================================
+    # SECTION 1 — FIREWALL + GPG KEY
+    # =====================================================
+
     - name: Gather service facts
       ansible.builtin.service_facts:
 
@@ -39,70 +57,91 @@
         state: present
         key: "https://packages.microsoft.com/keys/microsoft.asc"
 
+    # =====================================================
+    # SECTION 2 — SQL SERVER ENGINE REPO + INSTALL
+    # =====================================================
+
     - name: Download SQL Server repository file
       ansible.builtin.get_url:
         url: "{{ mssql_server_repo_url }}"
         dest: "{{ mssql_server_repo_file }}"
         mode: "0644"
+      register: server_repo
+      retries: 3
+      delay: 10
+      until: server_repo is succeeded
 
-    - name: Disable GPG checks in SQL Server repo file to match script
+    - name: Disable GPG checks in SQL Server repo file
       ansible.builtin.replace:
         path: "{{ mssql_server_repo_file }}"
         regexp: "^gpgcheck=1"
         replace: "gpgcheck=0"
 
-    - name: Disable repo GPG checks in SQL Server repo file to match script
+    - name: Disable repo GPG checks in SQL Server repo file
       ansible.builtin.replace:
         path: "{{ mssql_server_repo_file }}"
         regexp: "^repo_gpgcheck=1"
         replace: "repo_gpgcheck=0"
-
-    - name: Clean DNF cache
-      ansible.builtin.command: dnf clean all
-      changed_when: false
-
-    - name: Remove DNF cache directory
-      ansible.builtin.file:
-        path: /var/cache/dnf
-        state: absent
-
-    - name: Refresh package metadata
-      ansible.builtin.command: dnf makecache
-      changed_when: false
 
     - name: Install SQL Server package
       ansible.builtin.dnf:
         name: mssql-server
         state: present
         update_cache: true
+      register: server_install
+      retries: 3
+      delay: 10
+      until: server_install is succeeded
+
+    # =====================================================
+    # SECTION 3 — SQL SERVER SETUP (IDEMPOTENT, BLOCK/RESCUE)
+    # =====================================================
 
     - name: Check whether SQL Server setup has already been completed
       ansible.builtin.stat:
         path: "{{ mssql_setup_marker }}"
       register: mssql_setup_done
 
-    - name: Configure SQL Server
-      ansible.builtin.command: /opt/mssql/bin/mssql-conf -n setup
-      environment:
-        ACCEPT_EULA: "Y"
-        MSSQL_PID: "{{ mssql_pid }}"
-        MSSQL_SA_PASSWORD: "{{ mssql_sa_password }}"
+    - name: Configure and start SQL Server
       when: not mssql_setup_done.stat.exists
-      no_log: false
+      block:
+        - name: Run mssql-conf setup
+          ansible.builtin.command: /opt/mssql/bin/mssql-conf -n setup
+          environment:
+            ACCEPT_EULA: "Y"
+            MSSQL_PID: "{{ mssql_pid }}"
+            MSSQL_SA_PASSWORD: "{{ mssql_sa_password }}"
+          changed_when: not mssql_setup_done.stat.exists
+          no_log: true
 
-    - name: Create SQL Server setup marker
-      ansible.builtin.file:
-        path: "{{ mssql_setup_marker }}"
-        state: touch
-        mode: "0600"
-      when: not mssql_setup_done.stat.exists
+        - name: Create SQL Server setup marker
+          ansible.builtin.file:
+            path: "{{ mssql_setup_marker }}"
+            state: touch
+            mode: "0600"
+
+      rescue:
+        - name: Gather mssql-conf failure details from systemd journal
+          ansible.builtin.command: >
+            journalctl -u mssql-server --no-pager -n 50
+          changed_when: false
+          register: mssql_journal
+
+        - name: Fail with diagnostic context
+          ansible.builtin.fail:
+            msg: |
+              mssql-conf setup failed. Last 50 journal entries:
+              {{ mssql_journal.stdout_lines | join('\n') }}
+
+    # =====================================================
+    # SECTION 4 — SERVICE START
+    # =====================================================
 
     - name: Enable and start SQL Server service
       ansible.builtin.systemd:
         name: mssql-server
         enabled: true
         state: started
-        daemon_reload: true
 
     - name: Wait for SQL Server to listen on port 1433
       ansible.builtin.wait_for:
@@ -111,24 +150,368 @@
         delay: 5
         timeout: 300
 
+    # =====================================================
+    # SECTION 5 — TOOLS REPO + INSTALL
+    # =====================================================
+
     - name: Download Microsoft tools repository file
       ansible.builtin.get_url:
         url: "{{ mssql_tools_repo_url }}"
         dest: "{{ mssql_tools_repo_file }}"
         mode: "0644"
+      register: tools_repo
+      retries: 3
+      delay: 10
+      until: tools_repo is succeeded
 
-    - name: Disable GPG checks in tools repo file to match script
+    - name: Disable GPG checks in tools repo file
       ansible.builtin.replace:
         path: "{{ mssql_tools_repo_file }}"
         regexp: "^gpgcheck=1"
         replace: "gpgcheck=0"
 
-    - name: Disable repo GPG checks in tools repo file to match script
+    - name: Disable repo GPG checks in tools repo file
       ansible.builtin.replace:
         path: "{{ mssql_tools_repo_file }}"
         regexp: "^repo_gpgcheck=1"
         replace: "repo_gpgcheck=0"
 
-    - name: Refresh package metadata after adding tools repo
-      ansible.builtin.command: dnf makecache
+    - name: Install mssql-tools18 with EULA acceptance
+      ansible.builtin.dnf:
+        name: mssql-tools18
+        state: present
+        update_cache: true
+      environment:
+        ACCEPT_EULA: "Y"
+      register: tools_install
+      retries: 3
+      delay: 10
+      until: tools_install is succeeded
+
+    - name: Add sqlcmd to PATH system-wide
+      ansible.builtin.copy:
+        dest: /etc/profile.d/mssql-tools.sh
+        content: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # =====================================================
+    # SECTION 6 — DATABASE CREATION (IDEMPOTENT)
+    # =====================================================
+
+    - name: Check whether the demo database exists
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}"
+        -C -h -1 -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE name = '{{ sql_database_name }}'"
+      register: db_check
       changed_when: false
+      no_log: true
+
+    - name: Create demo database
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}"
+        -C -Q "CREATE DATABASE [{{ sql_database_name }}]"
+      when: sql_database_name not in db_check.stdout
+      changed_when: sql_database_name not in db_check.stdout
+      no_log: true
+
+    # =====================================================
+    # SECTION 7 — PERFORMANCE TUNING
+    # =====================================================
+
+    - name: Compute MaxDOP and max server memory
+      ansible.builtin.set_fact:
+        mssql_maxdop: "{{ [ansible_processor_vcpus | int, 8] | min }}"
+        mssql_max_memory_mb: "{{ [ansible_memtotal_mb | int - 4096, 512] | max }}"
+
+    - name: Check and apply MaxDOP
+      ansible.builtin.shell: |
+        val=$({{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C -h -1 \
+          -Q "SET NOCOUNT ON; SELECT CONVERT(varchar,value_in_use) FROM sys.configurations WHERE name='max degree of parallelism'")
+        val=$(echo $val | tr -d ' ')
+        if [ "$val" != "{{ mssql_maxdop }}" ]; then
+          {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C \
+            -Q "EXEC sp_configure 'show advanced options',1; RECONFIGURE; EXEC sp_configure 'max degree of parallelism',{{ mssql_maxdop }}; RECONFIGURE;"
+          echo CHANGED
+        else
+          echo OK
+        fi
+      register: maxdop_result
+      changed_when: "'CHANGED' in maxdop_result.stdout"
+      no_log: true
+
+    - name: Check and apply cost threshold for parallelism
+      ansible.builtin.shell: |
+        val=$({{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C -h -1 \
+          -Q "SET NOCOUNT ON; SELECT CONVERT(varchar,value_in_use) FROM sys.configurations WHERE name='cost threshold for parallelism'")
+        val=$(echo $val | tr -d ' ')
+        if [ "$val" != "50" ]; then
+          {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C \
+            -Q "EXEC sp_configure 'show advanced options',1; RECONFIGURE; EXEC sp_configure 'cost threshold for parallelism',50; RECONFIGURE;"
+          echo CHANGED
+        else
+          echo OK
+        fi
+      register: costthr_result
+      changed_when: "'CHANGED' in costthr_result.stdout"
+      no_log: true
+
+    - name: Check and apply max server memory
+      ansible.builtin.shell: |
+        val=$({{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C -h -1 \
+          -Q "SET NOCOUNT ON; SELECT CONVERT(varchar,value_in_use) FROM sys.configurations WHERE name='max server memory (MB)'")
+        val=$(echo $val | tr -d ' ')
+        if [ "$val" != "{{ mssql_max_memory_mb }}" ]; then
+          {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C \
+            -Q "EXEC sp_configure 'show advanced options',1; RECONFIGURE; EXEC sp_configure 'max server memory (MB)',{{ mssql_max_memory_mb }}; RECONFIGURE;"
+          echo CHANGED
+        else
+          echo OK
+        fi
+      register: maxmem_result
+      changed_when: "'CHANGED' in maxmem_result.stdout"
+      no_log: true
+
+    # =====================================================
+    # SECTION 8 — VERIFICATION
+    # =====================================================
+
+    - name: Verify SQL Server responds (SELECT @@VERSION)
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}"
+        -C -Q "SELECT @@VERSION"
+      register: sql_version
+      changed_when: false
+      no_log: true
+
+    - name: Show SQL Server version check passed
+      ansible.builtin.debug:
+        msg: "SQL Server version check passed"
+
+    - name: Verify demo database is accessible
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}"
+        -C -d "{{ sql_database_name }}" -Q "SELECT DB_NAME() AS CurrentDB"
+      register: db_verify
+      changed_when: false
+      no_log: true
+
+    - name: Show database verification result
+      ansible.builtin.debug:
+        var: db_verify.stdout_lines
+
+    # =====================================================
+    # SECTION 9 — SQL SERVER AGENT
+    # Enabling the Agent requires a service restart; the idempotency check reads
+    # mssql.conf so the restart only fires on first apply or if the setting drifts.
+    # =====================================================
+    - name: Read mssql.conf to check SQL Server Agent state
+      ansible.builtin.slurp:
+        src: /var/opt/mssql/mssql.conf
+      register: mssql_conf_raw
+      changed_when: false
+
+    - name: Enable SQL Server Agent
+      ansible.builtin.command: /opt/mssql/bin/mssql-conf set sqlagent.enabled true
+      register: sqlagent_enable
+      changed_when: true
+      when: >-
+        not (mssql_conf_raw.content | b64decode is search('(?s)\[sqlagent\].*enabled\s*=\s*true'))
+
+    - name: Restart SQL Server to activate the Agent
+      ansible.builtin.systemd:
+        name: mssql-server
+        state: restarted
+      when: sqlagent_enable is changed
+
+    - name: Wait for SQL Server to listen after Agent restart
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 1433
+        delay: 5
+        timeout: 120
+      when: sqlagent_enable is changed
+
+    - name: Verify SQL Server Agent is running
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C -h -1
+        -Q "SET NOCOUNT ON;
+            SELECT status_desc FROM sys.dm_server_services
+            WHERE servicename LIKE N'SQL Server Agent%'"
+      register: sqlagent_status
+      changed_when: false
+      failed_when: "'Running' not in sqlagent_status.stdout"
+      no_log: true
+
+    - name: Show SQL Server Agent status
+      ansible.builtin.debug:
+        msg: "SQL Server Agent: {{ sqlagent_status.stdout | trim }}"
+
+    # =====================================================
+    # SECTION 10 — DP-300 LAB DOWNLOAD + ADVENTUREWORKS RESTORE
+    # Every task is gated on lab_blob_sas_url so a standalone run (no SAS)
+    # skips this section cleanly. The .bak is Windows-origin so RESTORE needs
+    # explicit MOVE clauses; logical names + types are read from the backup
+    # header (RESTORE FILELISTONLY) so the clauses are correct for any version.
+    # Data file → /u02/sqldata (DATA drive), log file → /u03/sqllog (LOG drive).
+    # =====================================================
+    - name: Ensure unzip is available for archive extraction
+      ansible.builtin.dnf:
+        name: unzip
+        state: present
+      when: lab_blob_sas_url | length > 0
+
+    - name: Create the lab staging directory on the BACKUP drive
+      ansible.builtin.file:
+        path: "{{ lab_staging_dir }}"
+        state: directory
+        mode: "0755"
+      when: lab_blob_sas_url | length > 0
+
+    - name: Download the DP-300 lab archive from Blob Storage (SAS)
+      ansible.builtin.get_url:
+        url: "{{ lab_blob_sas_url }}"
+        dest: "{{ lab_staging_dir }}/{{ lab_file_name }}"
+        mode: "0644"
+        force: false
+      register: lab_download
+      retries: 3
+      delay: 10
+      until: lab_download is succeeded
+      when: lab_blob_sas_url | length > 0
+
+    - name: Extract the DP-300 lab archive
+      ansible.builtin.unarchive:
+        src: "{{ lab_staging_dir }}/{{ lab_file_name }}"
+        dest: "{{ lab_staging_dir }}"
+        remote_src: true
+        creates: "{{ lab_staging_dir }}/dp-300-database-administrator-master"
+      when: lab_blob_sas_url | length > 0
+
+    - name: Locate the AdventureWorks2017 backup inside the extracted lab files
+      ansible.builtin.find:
+        paths: "{{ lab_staging_dir }}"
+        patterns: "{{ adventureworks_bak_name }}"
+        recurse: true
+      register: aw_bak
+      when: lab_blob_sas_url | length > 0
+
+    - name: Fail if the AdventureWorks2017 backup was not found
+      ansible.builtin.fail:
+        msg: >-
+          {{ adventureworks_bak_name }} was not found anywhere under
+          {{ lab_staging_dir }}. Check that the archive extracted correctly.
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched == 0
+
+    - name: Create the mssql-owned data and log subdirectories on the SQL drives
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: mssql
+        group: mssql
+        mode: "0750"
+      loop:
+        - "{{ mssql_data_dir }}"
+        - "{{ mssql_log_dir }}"
+      when: lab_blob_sas_url | length > 0
+
+    - name: Ensure the mssql user can read the staged backup file
+      ansible.builtin.file:
+        path: "{{ aw_bak.files[0].path }}"
+        owner: mssql
+        group: mssql
+        mode: "0644"
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched > 0
+
+    - name: Write AdventureWorks2017 restore script
+      ansible.builtin.copy:
+        dest: /tmp/aw_restore.sql
+        owner: mssql
+        group: mssql
+        mode: "0600"
+        content: |
+          -- idempotent: skip if DB already exists
+          IF DB_ID(N'{{ adventureworks_db_name }}') IS NOT NULL
+          BEGIN PRINT 'EXISTS'; RETURN; END
+
+          -- capture backup file list into a temp table so Type column is typed correctly
+          CREATE TABLE #fl (
+              LogicalName          NVARCHAR(128),    PhysicalName NVARCHAR(260),
+              [Type]               CHAR(1),          FileGroupName NVARCHAR(128),
+              Size                 NUMERIC(20,0),    MaxSize NUMERIC(20,0),
+              FileId               INT,              CreateLSN NUMERIC(25,0),
+              DropLSN              NUMERIC(25,0),    UniqueId UNIQUEIDENTIFIER,
+              ReadOnlyLSN          NUMERIC(25,0),    ReadWriteLSN NUMERIC(25,0),
+              BackupSizeInBytes    BIGINT,           SourceBlockSize INT,
+              FileGroupId          INT,              LogGroupGUID UNIQUEIDENTIFIER NULL,
+              DifferentialBaseLSN  NUMERIC(25,0),   DifferentialBaseGUID UNIQUEIDENTIFIER NULL,
+              IsReadOnly BIT, IsPresent BIT,        TDEThumbprint VARBINARY(32) NULL,
+              SnapshotUrl          NVARCHAR(360) NULL
+          );
+          INSERT INTO #fl EXEC ('RESTORE FILELISTONLY FROM DISK=N''{{ aw_bak.files[0].path }}''');
+
+          -- build MOVE clauses: data → /u02/sqldata, log → /u03/sqllog
+          DECLARE @moves NVARCHAR(MAX) = N'', @logical NVARCHAR(128), @ftype CHAR(1), @seenData INT = 0;
+          DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
+              SELECT LogicalName, [Type] FROM #fl ORDER BY FileId;
+          OPEN cur; FETCH NEXT FROM cur INTO @logical, @ftype;
+          WHILE @@FETCH_STATUS = 0
+          BEGIN
+              DECLARE @dest NVARCHAR(512);
+              IF @ftype = N'L'
+                  SET @dest = N'{{ mssql_log_dir }}/' + @logical + N'.ldf';
+              ELSE IF @seenData = 0
+              BEGIN SET @dest = N'{{ mssql_data_dir }}/' + @logical + N'.mdf'; SET @seenData = 1; END
+              ELSE
+                  SET @dest = N'{{ mssql_data_dir }}/' + @logical + N'.ndf';
+              SET @moves += N', MOVE N''' + @logical + N''' TO N''' + @dest + N'''';
+              FETCH NEXT FROM cur INTO @logical, @ftype;
+          END
+          CLOSE cur; DEALLOCATE cur;
+
+          -- execute restore with STATS=10 for progress feedback
+          DECLARE @sql NVARCHAR(MAX) =
+              N'RESTORE DATABASE [{{ adventureworks_db_name }}] FROM DISK=N''{{ aw_bak.files[0].path }}'' WITH RECOVERY, REPLACE, STATS=10' + @moves;
+          EXEC sp_executesql @sql;
+          PRINT 'RESTORED';
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched > 0
+
+    - name: Restore AdventureWorks2017 onto the data/log SQL drives
+      ansible.builtin.shell: >
+        {{ sqlcmd_path }} -S localhost -U sa -C -b
+        -i /tmp/aw_restore.sql
+      environment:
+        SQLCMDPASSWORD: "{{ mssql_sa_password }}"
+      register: aw_restore
+      changed_when: "'RESTORED' in aw_restore.stdout"
+      no_log: true
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched > 0
+
+    - name: Verify AdventureWorks2017 file locations
+      ansible.builtin.command: >
+        {{ sqlcmd_path }} -S localhost -U sa -P "{{ mssql_sa_password }}" -C
+        -Q "SELECT name, physical_name FROM sys.master_files
+            WHERE database_id = DB_ID(N'{{ adventureworks_db_name }}')"
+      register: aw_files
+      changed_when: false
+      no_log: true
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched > 0
+
+    - name: Show AdventureWorks2017 file locations
+      ansible.builtin.debug:
+        var: aw_files.stdout_lines
+      when:
+        - lab_blob_sas_url | length > 0
+        - aw_bak.matched > 0
