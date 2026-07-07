@@ -3,7 +3,7 @@
 This document describes the **IaaS** track of the platform: SQL Server 2022 running on
 **Windows Server VMs** made highly available with **Always On Availability Groups (AGs)**
 across **two availability zones**, fronted by an internal load balancer listener, secured
-with private access and customer-managed encryption.
+with private access and customer-managed encryption for azure managed disks.
 
 It is the sibling of the managed-database design in
 [paas-database.md](paas-database.md). Where the PaaS doc delivers HA/DR through
@@ -12,6 +12,284 @@ ourselves on VMs — trading managed convenience for full control of the OS, the
 instance, and the clustering layer.
 
 ---
+
+## 🏛️ Active Directory Architecture
+
+The introduction of a dedicated Active Directory Domain Services (AD DS) and DNS server in this architecture enables secure, robust identity and authentication for Windows Server Failover Clustering (WSFC) and SQL Server Always On deployments. This approach supports Kerberos authentication, cluster and service account management, and future hybrid identity scenarios.
+
+### Problem
+
+*Workgroup* deployments lack secure, centralized authentication and cannot support Kerberos or clustered identity. Azure AD DS is not suitable for hosting WSFC or SQL Server service accounts. A dedicated AD DS and DNS VM is required to provide:
+- Kerberos authentication for WSFC and SQL Server
+- Managed service accounts and group policy
+- DNS integration for dynamic cluster and SQL listener records
+- A foundation for future hybrid (on-premises/Cloud) identity scenarios
+
+### Alternatives Considered
+
+| Option                     | Pros                                    | Cons                                                                                      |
+|----------------------------|-----------------------------------------|-------------------------------------------------------------------------------------------|
+| Workgroup (no domain)      | Simple, no domain admin required        | No Kerberos, no secure WSFC/SQL auth, no managed service accounts, weak cluster support   |
+| Azure AD DS                | Managed, no VM to patch                 | Not supported for WSFC, no custom OU/service account control, no DNS integration for AG   |
+| Dedicated AD DS VM (chosen)| Full control, supports all scenarios    | Must deploy, secure, and manage a domain controller                                       |
+
+### Decision
+
+Two dedicated AD DS + DNS domain controllers are deployed for the SQL infrastructure, spanning two availability zones:
+
+- **`dc-res-ind-112`** (zone 1) — the **forest root** of `sqlfci.local`, promoted by [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) (`microsoft.ad.domain`, new-forest path).
+- **`dc2-res-ind-112`** (zone 2) — an **additional domain controller (replica)** in the same forest, joined and promoted by [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) (`microsoft.ad.membership` + `microsoft.ad.domain_controller`).
+
+Both are Global Catalog servers, and directory changes replicate between them (see **Domain Controller Replication Verification** under Operational Validation for the live evidence).
+
+### Why
+
+- Kerberos authentication is required for WSFC and SQL Server Always On.
+- Cluster Name Objects (CNOs) and Virtual Computer Objects (VCOs) must be created and managed in Active Directory.
+- Full control over OUs, service accounts, and group policies is needed for secure cluster/service operation.
+- DNS must be tightly integrated for dynamic registration of cluster and SQL listener IPs.
+- A second domain controller provides identity and DNS redundancy: if one DC (or its availability zone) is lost, authentication, Kerberos, and AD-integrated DNS continue from the surviving replica — essential because WSFC and SQL Always On depend on continuous AD/DNS availability.
+- Lays the groundwork for hybrid identity and future gMSA support.
+
+### Future Evolution
+
+- Extend AD DS to hybrid (on-premises) scenarios by establishing trust or replication.
+- Migrate service accounts to Group Managed Service Accounts (gMSA) for improved security.
+- Integrate with Azure AD for cloud-based identity federation.
+
+---
+
+## ⚙️ Active Directory Automation Strategy ( CONVERT TO MERMAID )
+
+This architecture separates the automation of Active Directory infrastructure from the administration of directory objects and policies. The following playbooks each have focused responsibilities:
+
+- **configure-domain-controller.yml**: Provisions and promotes the first Windows Server VM to the forest-root domain controller, installs AD DS and DNS roles, and configures domain basics.
+- **configure-dc2.yml**: Joins a second Windows Server VM to the existing domain and promotes it to an additional domain controller (replica) in the same forest, giving the platform redundant AD DS and DNS across two availability zones.
+- **configure-active-directory.yml**: Creates OUs, service accounts, groups, and policies required for SQL and WSFC, but does not perform domain controller promotion.
+- **windows-dbdrive-configuration.yml**: Detects, partitions, and formats data disks on SQL nodes, ensuring correct drive letters and NTFS configuration.
+- **configure-wsfc.yml**: Joins SQL nodes to the domain, installs failover clustering features, and creates the WSFC cluster and cluster objects.
+- **sql-server-on-windows.yml**: Installs and configures SQL Server, sets up AGs and listeners, and binds service accounts.
+
+**Separation rationale:**  
+Active Directory infrastructure (promotion, DNS, core roles) is automated separately from Active Directory administration (OUs, accounts, permissions). This separation:
+- Reduces blast radius of changes
+- Enables idempotent, safe re-runs of administrative tasks without risk to domain controller health
+- Facilitates delegation and future automation scalability
+
+---
+
+## 🗂️ Organizational Unit Design (( CONVERT TO MERMAID ))
+
+The AD DS hierarchy is structured for clarity and least privilege:
+
+```
+domain.local
+├── Servers
+│   └── [SQL Node 1, SQL Node 2]
+├── Clusters
+│   └── [WSFC CNO, SQL Listener VCO]
+├── Service Accounts
+│   └── [SQLSvc, WSFCAdmin, ...]
+└── Groups
+    └── [SQLAdmins, ClusterAdmins, ...]
+```
+
+**Why dedicated OUs?**
+- The default `Computers` container cannot have GPOs linked or delegated permissions.
+- OUs allow for targeted GPO application and granular delegation.
+- Segregates SQL nodes, cluster identities, service accounts, and groups for clear management boundaries.
+
+**Purpose of each OU:**
+- **Servers**: Domain-joined SQL Server VMs (computer objects).
+- **Clusters**: Cluster Name Object (CNO) and Virtual Computer Objects (VCOs) for WSFC and SQL Listener.
+- **Service Accounts**: Domain accounts for SQL Server, agent, and cluster services.
+- **Groups**: Role-based AD groups for administration and service access.
+
+---
+
+## 👤 Service Account Strategy
+
+**Rationale for dedicated SQL service accounts:**
+- Reduces attack surface compared to running as LocalSystem or Administrator.
+- Enables least privilege and auditability.
+- Required for Kerberos constrained delegation and future gMSA migration.
+
+**Comparison:**
+
+| Account Type                     | Pros                       | Cons                          |
+|----------------------------------|----------------------------|-------------------------------|
+| LocalSystem                      | Highest privilege, default | Too much privilege, security risk |
+| NetworkService                   | Lower privilege            | Shared identity, not suitable for SQL AGs |
+| Administrator                    | Full control               | Not recommended, excessive rights |
+| Domain Service Account (current) | Least privilege, auditable | Password rotation required    |
+| Group Managed Service Account (gMSA, future) | Automatic password mgmt, least privilege | Requires AD 2012+, not yet enabled here |
+
+**Design supports future migration to gMSAs** by using named domain accounts and OU structure that can be swapped for gMSAs with minimal disruption.
+
+---
+
+## 🔄 Domain Join Strategy
+
+**Deployment order:**
+1. Domain controller and DNS VM is provisioned and promoted.
+2. Organizational Units (OUs), service accounts, and groups are created.
+3. SQL Server VMs are provisioned and joined to the domain.
+4. Computer objects are moved into the `Servers` OU *after* successful domain join.
+5. WSFC and SQL Server configuration proceeds.
+
+**Why not move SQL computer objects before domain join?**
+- The AD computer object is not created until the join completes.
+- Attempting to move a non-existent object fails.
+- Ensures OU policies and permissions are applied only after successful join.
+
+---
+
+## 🏗️ Windows Server Failover Cluster Identity
+
+WSFC and SQL Server Always On require special AD objects for secure operation:
+
+- **Cluster Name Object (CNO):** The computer account representing the WSFC cluster. Created in the `Clusters` OU.
+- **Virtual Computer Object (VCO):** The computer account representing the AG listener ("SQL Listener"). Created by the cluster under the CNO.
+
+**Diagram:**
+
+```mermaid
+graph TD
+    subgraph Servers OU
+        N1["SQL Node 1"]
+        N2["SQL Node 2"]
+    end
+    subgraph Clusters OU
+        CNO["WSFC Cluster Name Object"]
+        VCO["SQL Listener (VCO)"]
+    end
+    N1 -- "Cluster Service" --> CNO
+    N2 -- "Cluster Service" --> CNO
+    CNO -- "Creates/manages" --> VCO
+    VCO -- "Listener IP" --> N1
+    VCO -- "Listener IP" --> N2
+```
+
+**OU Placement:**
+- SQL node computer objects reside in the `Servers` OU for GPO and admin separation.
+- CNO and VCO reside in the `Clusters` OU for delegated cluster permissions and isolation.
+
+---
+
+## 🚀 Deployment Pipeline
+
+**End-to-end deployment flow:**
+
+```mermaid
+flowchart TD
+    A[Azure Infrastructure] --> B[Provision Domain Controller VM]
+    B --> C[Promote to AD DS & DNS]
+    C --> D[Configure OUs, Service Accounts, Groups]
+    D --> D2["Promote Second DC (replica) & verify replication"]
+    D2 --> E[Provision SQL Server VMs]
+    E --> F[Join SQL VMs to Domain]
+    F --> G[Move Computer Objects to Servers OU]
+    G --> H[Configure Data Disks/Drives]
+    H --> I[Install WSFC Features]
+    I --> J["Create WSFC Cluster (CNO)"]
+    J --> K[Configure Cluster Quorum/DNS]
+    K --> L[Install SQL Server]
+    L --> M[Configure SQL Service Accounts]
+    M --> N[Create Always On AG]
+    N --> O["Create SQL Listener (VCO)"]
+    O --> P[Validate HA/DR]
+```
+
+---
+
+## 📘 Engineering Decisions and Lessons Learned
+
+### DNS Client Restart vs DNS Cache Flush
+**Problem:** After joining the domain and updating DNS, name resolution on SQL nodes was unreliable until reboot.
+**Alternatives Considered:**  
+- Restart DNS Client service  
+- Flush DNS cache (`ipconfig /flushdns`)  
+- Full reboot
+**Decision:** Restarting the DNS Client service is usually sufficient and less disruptive than a full reboot.
+**Why:** Ensures the node picks up new DNS settings and registrations immediately.
+
+### Discovering AD DS Managed Disk
+**Problem:** Identifying the correct disk to initialize and format for AD DS database and logs.
+**Alternatives Considered:**  
+- By disk number  
+- By Azure LUN  
+- By provisioned size (chosen)
+**Decision:** Select disk by matching the provisioned size.
+**Why:** Disk numbers and LUNs can vary depending on VM size and Azure deployment timing, but the size is unique and stable.
+
+### Separating AD DS Promotion from AD Administration
+**Problem:** Combining domain controller promotion with AD object administration risked idempotency and error recovery.
+**Alternatives Considered:**  
+- Single playbook for both roles  
+- Separate playbooks (chosen)
+**Decision:** Separate domain controller promotion (infrastructure) from management of OUs, accounts, and GPOs (administration).
+**Why:** Reduces risk, improves reusability, and allows safe re-runs of administrative tasks.
+
+### Moving Computer Objects Only After Domain Join
+**Problem:** Computer objects do not exist until domain join completes, so cannot be moved or managed in OUs.
+**Alternatives Considered:**  
+- Pre-create computer objects  
+- Move after join (chosen)
+**Decision:** Move computer objects into target OUs only after successful domain join.
+**Why:** Ensures correct object creation, avoids errors, and guarantees GPOs apply as intended.
+
+---
+
+## ✅ Operational Validation
+
+The following table documents key validation commands and what each proves:
+
+| Area           | Command / Check                                      | What it Proves                                                   |
+|----------------|------------------------------------------------------|------------------------------------------------------------------|
+| Active Directory | `Get-ADDomain`, `Get-ADUser`, `Get-ADComputer`     | Domain controller is functional, objects exist                    |
+| AD Replication  | `repadmin /replsummary`, `Get-ADReplicationPartnerMetadata` | Both domain controllers replicate inbound and outbound with zero failures |
+| DNS             | `nslookup <domain>`, `Resolve-DnsName <listener>`   | AD-integrated DNS is resolving cluster and listener names         |
+| Domain Join     | `whoami`, `echo %USERDOMAIN%`, `nltest /dsgetdc:...` | Node is joined to domain, domain controller reachable             |
+| Storage         | `Get-Volume`, `fsutil fsinfo volumeinfo F:`         | Data/log/backup drives are present, formatted, correct settings   |
+| WSFC            | `Get-Cluster`, `Get-ClusterNode`, `Test-Cluster`    | Cluster is formed, nodes are up, CNO exists                      |
+| SQL Server      | `sqlcmd -S <listener> -E -Q "SELECT @@SERVERNAME"`  | SQL is running, listener is reachable, Windows auth works         |
+| Always On AG    | `Get-ClusterGroup`, `Get-SqlAvailabilityGroup`      | AG is created, synchronized, listener is online                   |
+
+Each validation demonstrates the intended outcome for its layer:
+- AD: Directory services are operational
+- AD Replication: Directory changes converge across both domain controllers
+- DNS: Cluster and SQL names resolve as expected
+- Domain Join: Nodes are correctly authenticated and managed
+- Storage: SQL disks are ready for use and follow best practices
+- WSFC: Cluster is healthy and CNO/VCOs are present
+- SQL: SQL Server is running and accessible through the cluster listener
+- AG: Always On high availability is functional
+
+### 🔁 Domain Controller Replication Verification
+
+The two-domain-controller topology is stood up by two playbooks: [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) promotes `dc-res-ind-112` as the **forest root** of `sqlfci.local`, and [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) joins and promotes `dc2-res-ind-112` as an **additional domain controller (replica)** in the same forest. The captures below are the live evidence that both DCs are running, share one forest, and actively replicate directory data. Red annotations highlight the values a reviewer should check to confirm the result is genuine.
+
+**1 — Both domain-controller VMs are running (Azure portal).** `dc-res-ind-112` and `dc2-res-ind-112` are both in the `Running` state in Central India.
+
+<img src="./images/dc-vms-running.png" alt="Azure portal showing dc-res-ind-112 and dc2-res-ind-112 both Running in Central India" width="820" />
+
+**2 — Both DCs are registered in one forest, and both are Global Catalogs.** `Get-ADDomainController` lists both hosts with their static private IPs (`10.10.4.4`, `10.10.4.5`); `Get-ADforest` shows a single domain `sqlfci.local` with both servers as Global Catalogs; `Get-ADReplicationPartnerMetadata` shows a recent `LastReplicationSuccess`.
+
+<img src="./images/dc-forest-and-replication.png" alt="Get-ADDomainController, Get-ADforest and replication partner metadata listing both DCs in one forest" width="820" />
+
+**3 — Replication is healthy in both directions.** `repadmin /replsummary` reports `0` failures for every source and destination DSA — no replication errors between `dc-res-ind-112` and `dc2-res-ind-112`, inbound or outbound.
+
+<img src="./images/dc-replication-summary.png" alt="repadmin /replsummary showing zero replication failures between both DCs" width="820" />
+
+**4 — A test object is created on DC1.** A `Test Replication` user (`test.replication@sqlfci.local`) is created on `dc-res-ind-112` (RDP host `20.219.53.47`) and appears in the `sqlfci.local/Users` container in Active Directory Users and Computers.
+
+<img src="./images/dc-test-user-created.png" alt="New-ADUser creating the Test Replication account on DC1, visible in ADUC" width="820" />
+
+**5 — The same object is visible on DC2.** Running `Get-ADUser test.replication` on `dc2-res-ind-112` (RDP host `20.219.145.108`) returns the identical object — same distinguished name and UPN — proving the create on DC1 replicated to DC2. The `hostname` output confirms the query ran on the second DC.
+
+<img src="./images/dc-test-user-replicated.png" alt="Get-ADUser on dc2-res-ind-112 returning the replicated Test Replication user" width="820" />
+
+Together these confirm the intended outcome of this layer: a redundant, actively replicating two-DC forest that WSFC and SQL Server Always On can depend on for Kerberos authentication and AD-integrated DNS.
 
 ## 🔴 Problem Overview
 
@@ -54,7 +332,7 @@ deployable inside an identity-restricted sandbox.
 | Slow client reconnect on failover | Single floating listener endpoint  | **Internal Load Balancer** (floating IP + health probe) |
 | Public exposure               | Attack surface reduced to an allowlisted `/32` (not eliminated) | **Azure Bastion** for interactive admin + allowlisted public **WinRM/SSH** for Ansible, NSG-scoped to the operator IP |
 | Data at rest                  | Customer-controlled disk encryption   | **Key Vault CMK** + **Disk Encryption Set (SSE)** |
-| Identity (no domain)          | Cluster trust without Active Directory | **Local accounts + certificate HADR endpoints** |
+| Identity (domain-based)       | Cluster + HADR trust via a domain      | **Dedicated AD DS + DNS Domain Controller**, Kerberos-authenticated WSFC/HADR (see [FCI/02_Active_Directory_Migration.md](Failover%20Cluster%20Instance%20%28FCI%29/02_Active_Directory_Migration.md)) |
 
 ```mermaid
 flowchart LR
@@ -85,7 +363,7 @@ exists for the cases PaaS cannot cover:
 | -------------------------- | ----------------------------------------------------------------------- |
 | Full OS + instance control | Agent installs, trace flags, file placement, instance-level configuration |
 | Always On AG demonstration | Show WSFC, synchronous replicas, listener failover end-to-end           |
-| No-Active-Directory lab     | Prove a **workgroup cluster** with certificate-based trust (no domain)   |
+| Active Directory lab        | Stand up **AD DS + DNS**, then a domain-joined WSFC + Always On AG end-to-end (evolved from the earlier workgroup design — see [FCI/02](Failover%20Cluster%20Instance%20%28FCI%29/02_Active_Directory_Migration.md)) |
 
 ---
 

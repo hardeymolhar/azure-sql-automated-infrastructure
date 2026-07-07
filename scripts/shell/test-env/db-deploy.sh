@@ -19,14 +19,14 @@ source "$(dirname "$0")/env.conf"
 # ---------------------------------------------------------
 # Seeds the variable/config files the later steps read.
 echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
-# ./var-config.sh
+./var-config.sh
 
-# ---------------------------------------------------------
-# PHASE 1 - Core infrastructure (foundation for everything)
-# ---------------------------------------------------------
-# Networking comes FIRST: storage and key vault below attach network rules that
-# reference the subnet (and the subnet's service endpoints), so the VNet/subnet
-# must already exist. VMs also need the NICs that network.sh creates.
+# # ---------------------------------------------------------
+# # PHASE 1 - Core infrastructure (foundation for everything)
+# # ---------------------------------------------------------
+# # Networking comes FIRST: storage and key vault below attach network rules that
+# # reference the subnet (and the subnet's service endpoints), so the VNet/subnet
+# # must already exist. VMs also need the NICs that network.sh creates.
 
 # echo -e "${BLUE}STEP 1 - Virtual Network, subnets, NSGs, NICs, public IPs${NC}"
 # ./network.sh
@@ -44,10 +44,19 @@ echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
 # echo -e "${BLUE}STEP 3 - Key Vault + encryption keys${NC}"
 # ./key-vault.sh
 
-# # requires: network.sh (needs the VNet + VM NSGs it adds rules to). Bastion only
-# # depends on networking, so it can run any time after STEP 1.
-# # echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
-# ./bastion.sh
+# requires: network.sh (needs the VNet + VM NSGs it adds rules to). Bastion only
+# depends on networking, so it can run any time after STEP 1.
+echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
+./bastion.sh
+
+# requires: network.sh (the dedicated DC subnet/NSG + static-IP DC NIC) and, for
+# the WSFC Cloud Witness later, storage.sh. Creates the Windows Server 2022 VM
+# that becomes the Active Directory Domain Controller (AD DS + DNS) and enables
+# WinRM. Active Directory is a first-class dependency, so the DC VM is created
+# early here; vm-res-ind-112.sh (Phase 4) promotes it BEFORE the SQL nodes domain-join.
+# echo -e "${BLUE}STEP 4b - Domain Controller VM (AD DS + DNS host)${NC}"
+# ./dc-vm.sh
+# ./dc-pipeline.sh
 
 # ---------------------------------------------------------
 # PHASE 2 - Linux application VM
@@ -184,7 +193,7 @@ echo -e "${BLUE}STEP 12 - Configure VMs with Ansible (drives, packages, SQL)${NC
 
 # LIN_VM_IP=$(az vm list-ip-addresses \
 #   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-#   --name "vm-stg-ind-103" \
+#   --name "vm-res-ind-112" \
 #   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
 #   -o tsv)
 

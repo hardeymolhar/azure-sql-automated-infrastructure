@@ -1,0 +1,174 @@
+---
+# =====================================================================
+# CONFIGURE ACTIVE DIRECTORY DOMAIN CONTROLLER (AD DS + DNS)
+# ---------------------------------------------------------------------
+# Turns the freshly-provisioned Windows Server 2022 VM (created by
+# scripts/shell/test-env/dc-vm.sh) into the forest root Domain Controller for the
+# SQL HA stack. This is the FIRST in-guest step of the pipeline — every later
+# stage (SQL-node domain join, WSFC, SQL FCI/AG) depends on AD + DNS existing.
+#
+# Responsibilities (Microsoft-supported deployment):
+#   1. Install the AD DS + DNS Server roles.
+#   2. Promote the host to a NEW forest (Install-ADDSForest under the hood).
+#   3. Handle the promotion reboot and wait for the directory to come online.
+#   4. Configure a DNS forwarder to Azure's recursive resolver so the DC can
+#      resolve public names AND the VNet-linked corp.internal Private DNS zone.
+#   5. Verify AD DS and DNS are functional.
+#
+# Credential transition across the promotion reboot:
+#   The inventory connects as the UNQUALIFIED user 'sqladmin'. Before promotion
+#   that is the VM's local admin; after promotion the local SAM is migrated into
+#   AD, so 'sqladmin' authenticates as the domain admin ({{ ad_netbios }}\sqladmin)
+#   with the SAME password. microsoft.ad.domain (reboot: true) manages the reboot
+#   and reconnects transparently — no inventory change is needed mid-play.
+#
+# Idempotency: win_feature and microsoft.ad.domain are no-ops when the roles are
+# already installed / the host is already a DC for {{ ad_domain }}; the forwarder
+# and verification tasks are guarded with changed_when/until.
+# =====================================================================
+- name: Configure Active Directory Domain Controller (AD DS + DNS)
+  hosts: domain_controller
+  gather_facts: false
+
+  vars:
+    ad_domain: "{{ ad_domain_name }}"
+    ad_netbios: "{{ ad_netbios_name }}"
+    safe_mode_password: "{{ ad_safe_mode_password }}"
+    dns_forwarder: "{{ azure_dns_resolver | default('168.63.129.16') }}"
+
+  tasks:
+    - name: Install AD DS and DNS Server roles
+      ansible.windows.win_feature:
+        name:
+          - AD-Domain-Services
+          - DNS
+        state: present
+        include_management_tools: true
+      register: ad_features
+
+    - name: Install Telnet Client
+      ansible.windows.win_feature:
+        name: Telnet-Client
+        state: present
+
+    # =====================================================
+    # PREPARE THE DEDICATED AD DS DATA DISK
+    # -----------------------------------------------------
+    # Discover the managed data disk provisioned at 4098 GB,
+    # initialize it if required, create a single NTFS volume
+    # on drive F:, and prepare the NTDS and SYSVOL folders.
+    # =====================================================
+    - name: Discover the AD DS managed disk
+      ansible.windows.win_powershell:
+        script: |
+          $disk = Get-Disk | Where-Object {
+              $_.Size -eq (4098GB)
+          }
+
+          if (-not $disk) {
+              throw 'Unable to locate the 4098 GB AD DS managed disk.'
+          }
+
+          $disk.Number
+      register: adds_disk
+      changed_when: false
+
+    - name: Initialize the AD DS managed disk
+      community.windows.win_initialize_disk:
+        disk_number: "{{ adds_disk.output[0] | int }}"
+        style: gpt
+
+    - name: Create the AD DS partition
+      community.windows.win_partition:
+        disk_number: "{{ adds_disk.output[0] | int }}"
+        drive_letter: F
+        partition_size: -1
+        state: present
+
+    - name: Format the AD DS volume
+      community.windows.win_format:
+        drive_letter: F
+        file_system: ntfs
+        new_label: ADDS
+        allocation_unit_size: 4096
+
+    - name: Create NTDS directory
+      ansible.windows.win_file:
+        path: F:\NTDS
+        state: directory
+
+    - name: Create SYSVOL directory
+      ansible.windows.win_file:
+        path: F:\SYSVOL
+        state: directory
+
+    - name: Promote host to a new Active Directory forest ({{ ad_domain }})
+      microsoft.ad.domain:
+        dns_domain_name: "{{ ad_domain }}"
+        domain_netbios_name: "{{ ad_netbios }}"
+        safe_mode_password: "{{ safe_mode_password }}"
+        install_dns: true
+        database_path: "F:\\NTDS"
+        log_path: "F:\\NTDS"
+        sysvol_path: "F:\\SYSVOL"
+        reboot: true
+        reboot_timeout: 1200
+      register: dc_promote
+
+    - name: Wait for Active Directory to become available
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory -ErrorAction Stop
+        (Get-ADDomain -ErrorAction Stop).DNSRoot
+      register: ad_ready
+      changed_when: false
+      retries: 12
+      delay: 15
+      until: ad_ready.rc == 0 and ad_domain in ad_ready.stdout
+
+    # =====================================================
+    # DNS FORWARDER -> AZURE RECURSIVE RESOLVER (168.63.129.16)
+    # -----------------------------------------------------
+    # AD DNS is authoritative for {{ ad_domain }} only. Forwarding everything else
+    # to Azure's resolver lets the DC (and therefore all domain members) resolve
+    # public names AND the VNet-linked corp.internal Private DNS zone — keeping the
+    # two zones split-brain-free.
+    # =====================================================
+    - name: Configure DNS forwarder to the Azure recursive resolver
+      ansible.windows.win_shell: |
+        $fwd = '{{ dns_forwarder }}'
+        $current = @((Get-DnsServerForwarder -ErrorAction SilentlyContinue).IPAddress |
+          ForEach-Object { $_.IPAddressToString })
+        if ($current -contains $fwd) {
+          Write-Output "PRESENT"
+        } else {
+          Set-DnsServerForwarder -IPAddress $fwd -PassThru | Out-Null
+          Write-Output "SET"
+        }
+      register: dns_fwd
+      changed_when: "'SET' in dns_fwd.stdout"
+
+    # =====================================================
+    # VERIFY AD DS + DNS
+    # =====================================================
+    - name: Verify the AD forest and domain
+      ansible.windows.win_shell: |
+        $d = Get-ADDomain -ErrorAction Stop
+        $f = Get-ADForest -ErrorAction Stop
+        "DOMAIN=$($d.DNSRoot) NETBIOS=$($d.NetBIOSName) FOREST=$($f.RootDomain)"
+      register: ad_verify
+      changed_when: false
+      failed_when: ad_domain not in ad_verify.stdout
+
+    - name: Verify DNS resolves the AD domain (SOA)
+      ansible.windows.win_shell: |
+        Resolve-DnsName -Name '{{ ad_domain }}' -Type SOA -ErrorAction Stop | Out-Null
+        Write-Output "DNS_OK"
+      register: dns_verify
+      changed_when: false
+      failed_when: "'DNS_OK' not in dns_verify.stdout"
+
+    - name: Report Domain Controller status
+      ansible.builtin.debug:
+        msg: >-
+          Domain Controller ready — {{ ad_verify.stdout | trim }};
+          DNS forwarder {{ dns_forwarder }} ({{ dns_fwd.stdout | trim }}).

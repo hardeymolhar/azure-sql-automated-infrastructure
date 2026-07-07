@@ -366,3 +366,165 @@ else
     --public-ip-address "$WIN_PUBLIC_IP_NAME_2" \
     --location "$LOCATION"
 fi
+
+#########################################################
+# DOMAIN CONTROLLER NETWORK SECTION (AD DS + DNS)
+# -------------------------------------------------------
+# A DEDICATED subnet + NSG + static-IP NIC for the Windows Server 2022 Domain
+# Controller. Kept separate from the SQL subnet so AD traffic is isolated and the
+# DC has a stable private IP (DC_PRIVATE_IP) the SQL nodes point their DNS at.
+#########################################################
+
+# =========================================================
+# CREATE DC SUBNET (shared VNET with the SQL nodes)
+# =========================================================
+
+if resource_exists "az network vnet subnet show --resource-group $RESOURCE_GROUP --vnet-name $VNET_NAME --name $DC_SUBNET_NAME"; then
+  echo -e "${YELLOW}DC subnet already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC subnet ($DC_SUBNET_PREFIX)...${NC}"
+
+  az network vnet subnet create \
+    --resource-group "$RESOURCE_GROUP" \
+    --vnet-name "$VNET_NAME" \
+    --name "$DC_SUBNET_NAME" \
+    --address-prefixes "$DC_SUBNET_PREFIX"
+fi
+
+# =========================================================
+# CREATE DC NSG
+# =========================================================
+
+if resource_exists "az network nsg show --resource-group $RESOURCE_GROUP --name $DC_NSG_NAME"; then
+  echo -e "${YELLOW}DC NSG already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC NSG...${NC}"
+
+  az network nsg create \
+    --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" \
+    --name "$DC_NSG_NAME"
+fi
+
+# =========================================================
+# DC NSG RULES
+# ---------------------------------------------------------
+# AD DS + DNS service ports are opened to the VNet only (intra-VNet domain
+# traffic). Admin ports (RDP / WinRM) stay scoped to the workstation CLIENT_IP,
+# matching the SQL-node convention. TCP and UDP ranges are grouped into single
+# rules to keep the rule count low. Port map (Microsoft AD DS firewall guidance):
+#   53 DNS, 88 Kerberos, 135 RPC-EPM, 389 LDAP, 445 SMB, 464 Kerberos-pwd,
+#   636 LDAPS, 3268/3269 Global Catalog, 49152-65535 dynamic RPC, 123 W32Time.
+# =========================================================
+
+create_dc_nsg_rule() {
+  local rule_name="$1"
+  local priority="$2"
+  local protocol="$3"
+  local source="$4"
+  shift 4
+  local ports=("$@")
+
+  if resource_exists "az network nsg rule show --resource-group $RESOURCE_GROUP --nsg-name $DC_NSG_NAME --name $rule_name"; then
+    echo -e "${YELLOW}DC NSG rule $rule_name already exists. Skipping...${NC}"
+  else
+    echo -e "${BLUE}Creating DC NSG rule $rule_name ($protocol ${ports[*]})...${NC}"
+
+    az network nsg rule create \
+      --resource-group "$RESOURCE_GROUP" \
+      --nsg-name "$DC_NSG_NAME" \
+      --name "$rule_name" \
+      --priority "$priority" \
+      --direction Inbound \
+      --access Allow \
+      --protocol "$protocol" \
+      --source-address-prefixes "$source" \
+      --source-port-ranges "*" \
+      --destination-port-ranges "${ports[@]}"
+  fi
+}
+
+create_dc_nsg_rule "Allow-AD-TCP"  1000 Tcp VirtualNetwork 53 88 135 389 445 464 636 3268 3269 49152-65535
+create_dc_nsg_rule "Allow-AD-UDP"  1010 Udp VirtualNetwork 53 88 123 389 464
+create_dc_nsg_rule "Allow-RDP-Client-IP" 1100 Tcp "$CLIENT_IP" 3389
+create_dc_nsg_rule "Allow-WinRM" 1110 Tcp "$CLIENT_IP" "$WIN_WINRM_PORT" "$HTTPS_WIN_WINRM_PORT"
+
+# =========================================================
+# CREATE DC PUBLIC IP
+# =========================================================
+
+if resource_exists "az network public-ip show --resource-group $RESOURCE_GROUP --name $DC_PUBLIC_IP_NAME"; then
+  echo -e "${YELLOW}DC Public IP already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC Public IP...${NC}"
+
+  az network public-ip create \
+    --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" \
+    --name "$DC_PUBLIC_IP_NAME" \
+    --sku Standard
+fi
+
+
+if resource_exists "az network public-ip show --resource-group $RESOURCE_GROUP --name $DC2_PUBLIC_IP_NAME"; then
+  echo -e "${YELLOW}DC Public IP already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC Public IP...${NC}"
+
+  az network public-ip create \
+    --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" \
+    --name "$DC2_PUBLIC_IP_NAME" \
+    --sku Standard
+fi
+
+# =========================================================
+# CREATE DC NIC (static private IP)
+# =========================================================
+
+if resource_exists "az network nic show --resource-group $RESOURCE_GROUP --name $DC_NIC_NAME"; then
+  echo -e "${YELLOW}DC NIC already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC NIC with static IP $DC_PRIVATE_IP...${NC}"
+
+  az network nic create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$DC_NIC_NAME" \
+    --vnet-name "$VNET_NAME" \
+    --subnet "$DC_SUBNET_NAME" \
+    --network-security-group "$DC_NSG_NAME" \
+    --public-ip-address "$DC_PUBLIC_IP_NAME" \
+    --private-ip-address "$DC_PRIVATE_IP" \
+    --location "$LOCATION"
+fi
+
+if resource_exists "az network nic show --resource-group $RESOURCE_GROUP --name $DC2_NIC_NAME"; then
+  echo -e "${YELLOW}DC NIC already exists. Skipping creation...${NC}"
+else
+  echo -e "${BLUE}Creating DC NIC with static IP $DC2_PRIVATE_IP...${NC}"
+
+  az network nic create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$DC2_NIC_NAME" \
+    --vnet-name "$VNET_NAME" \
+    --subnet "$DC_SUBNET_NAME" \
+    --network-security-group "$DC_NSG_NAME" \
+    --public-ip-address "$DC2_PUBLIC_IP_NAME" \
+    --private-ip-address "$DC2_PRIVATE_IP" \
+    --location "$LOCATION"
+fi
+
+# =========================================================
+# POINT DNS AT THE DOMAIN CONTROLLER (Azure NIC level)
+# ---------------------------------------------------------
+# Microsoft guidance: the preferred DNS server should be set at the Azure NIC/VNet
+# level, NOT inside the guest, so it survives reboots and DHCP renewals. The DC
+# points at itself; the SQL nodes point at the DC. Domain members must use AD DNS
+# ONLY (never the Azure resolver as a secondary), so a single server is set. Set
+# on the NIC is idempotent (re-applying the same value is a no-op).
+# =========================================================
+
+echo -e "${BLUE}Setting NIC-level DNS: DC -> self, SQL nodes -> DC ($DC_PRIVATE_IP)...${NC}"
+az network nic update --resource-group "$RESOURCE_GROUP" --name "$DC_NIC_NAME"     --dns-servers "$DC_PRIVATE_IP" --output none
+az network nic update --resource-group "$RESOURCE_GROUP" --name "$WIN_NIC_NAME"    --dns-servers "$DC_PRIVATE_IP" --output none
+az network nic update --resource-group "$RESOURCE_GROUP" --name "$WIN_NIC_NAME_2"  --dns-servers "$DC_PRIVATE_IP" --output none

@@ -1,0 +1,116 @@
+---
+- name: Configure Active Directory structure
+  hosts: domain_controller
+  gather_facts: false
+
+  vars:
+    ad_domain: "{{ ad_domain_name | default('corp.internal') }}"
+    domain_dn: >-
+      DC={{ ad_domain.split('.')[0] }},
+      DC={{ ad_domain.split('.')[1] }}
+
+  tasks:
+
+    #########################################################
+    # Wait until Active Directory is available
+    #########################################################
+
+    - name: Wait for Active Directory
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        (Get-ADDomain).DNSRoot
+      register: ad_ready
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: ad_ready.rc == 0
+
+    #########################################################
+    # Organizational Units
+    #########################################################
+
+    - name: Create Organizational Units
+      microsoft.ad.ou:
+        name: "{{ item }}"
+        path: "{{ domain_dn }}"
+        protect_from_deletion: true
+        state: present
+      loop:
+        - Servers
+        - Clusters
+        - Service Accounts
+        - Groups
+
+    #########################################################
+    # Security Groups
+    #########################################################
+
+    - name: Create SQL Administration group
+      microsoft.ad.group:
+        identity: SQLAdmins
+        scope: global
+        category: security
+        path: "OU=Groups,{{ domain_dn }}"
+        state: present
+
+    - name: Create SQL Service Accounts group
+      microsoft.ad.group:
+        identity: SQLServiceAccounts
+        scope: global
+        category: security
+        path: "OU=Groups,{{ domain_dn }}"
+        state: present
+
+    #########################################################
+    # SQL Service Accounts
+    #########################################################
+
+    - name: Create SQL Engine service account
+      microsoft.ad.user:
+        identity: svc_sqlengine
+        firstname: SQL
+        surname: Engine
+        path: "OU=Service Accounts,{{ domain_dn }}"
+        password: "{{ ad_safe_mode_password }}"
+        password_never_expires: true
+        enabled: true
+        state: present
+
+    - name: Create SQL Agent service account
+      microsoft.ad.user:
+        identity: svc_sqlagent
+        firstname: SQL
+        surname: Agent
+        path: "OU=Service Accounts,{{ domain_dn }}"
+        password: "{{ ad_safe_mode_password }}"
+        password_never_expires: true
+        enabled: true
+        state: present
+
+    #########################################################
+    # Group Membership
+    #########################################################
+
+    - name: Add service accounts to SQLServiceAccounts group
+      microsoft.ad.group:
+        identity: SQLServiceAccounts
+        members:
+          add:
+            - svc_sqlengine
+            - svc_sqlagent
+
+    #########################################################
+    # Validation
+    #########################################################
+
+    - name: Verify OUs
+      ansible.windows.win_shell: |
+        Get-ADOrganizationalUnit -Filter * |
+          Select Name
+      changed_when: false
+
+    - name: Verify SQL service accounts
+      ansible.windows.win_shell: |
+        Get-ADUser svc_sqlengine
+        Get-ADUser svc_sqlagent
+      changed_when: false

@@ -4,3 +4,6 @@ collections:
   - name: community.general
   - name: community.windows
   - name: community.docker
+  # Active Directory: forest promotion (microsoft.ad.domain) + domain join
+  # (microsoft.ad.membership) for the domain-based SQL HA architecture.
+  - name: microsoft.ad

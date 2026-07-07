@@ -74,9 +74,9 @@ find "$TARGET_DIR" \
     # =========================================================
     # REPLACE INFRASTRUCTURE RESOURCE SUFFIXES
     # Example:
-    # vm-stg-ind-103 -> vm-stg-ind-103
-    # kv-stg-ind-103 -> kv-stg-ind-103
-    # sql-des-stg-ind-103 -> sql-des-stg-ind-103
+    # vm-res-ind-112 -> vm-res-ind-112
+    # kv-res-ind-112 -> kv-res-ind-112
+    # sql-des-res-ind-112 -> sql-des-res-ind-112
     # =========================================================
 
 perl -pi -e "s/([\"'=:\x20])(vm|vnet|subnet|nsg|nic|pip|kv|sql-des|des|data-dsk|log-dsk|temp-dsk|backup-dsk)-[a-zA-Z0-9-]+/\1\2-$NEW_ID/g" "$file"

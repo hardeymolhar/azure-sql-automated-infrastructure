@@ -1,0 +1,234 @@
+---
+# =====================================================================
+# CONFIGURE SECONDARY ACTIVE DIRECTORY DOMAIN CONTROLLER (AD DS + DNS)
+# ---------------------------------------------------------------------
+# Turns the freshly-provisioned Windows Server 2022 VM into an
+# ADDITIONAL Domain Controller for the existing forest created by DC1.
+#
+# Responsibilities (Microsoft-supported deployment):
+#   1. Install the AD DS + DNS Server roles.
+#   2. Prepare the dedicated AD DS data disk.
+#   3. Join the existing Active Directory domain.
+#   4. Promote the server as an ADDITIONAL Domain Controller.
+#   5. Configure a DNS forwarder to Azure's recursive resolver.
+#   6. Verify AD replication and DNS.
+#
+# Idempotency:
+#   • win_feature is idempotent.
+#   • microsoft.ad.membership is a no-op if already domain joined.
+#   • microsoft.ad.domain_controller is a no-op if already promoted.
+#   • Disk modules converge automatically.
+# =====================================================================
+
+- name: Configure Secondary Active Directory Domain Controller
+  hosts: secondary_domain_controller
+  gather_facts: false
+
+  vars:
+    ad_domain: "{{ ad_domain_name }}"
+    safe_mode_password: "{{ ad_safe_mode_password }}"
+
+    domain_admin_user: "{{ domain_admin_user }}"
+    domain_admin_password: "{{ ad_safe_mode_password }}"
+
+    dns_forwarder: "{{ azure_dns_resolver | default('168.63.129.16') }}"
+
+  tasks:
+
+    # =====================================================
+    # INSTALL AD DS + DNS
+    # =====================================================
+
+    - name: Install AD DS and DNS Server roles
+      ansible.windows.win_feature:
+        name:
+          - AD-Domain-Services
+          - DNS
+        state: present
+        include_management_tools: true
+
+    - name: Install Telnet Client
+      ansible.windows.win_feature:
+        name: Telnet-Client
+        state: present
+
+    - name: Configure preferred and alternate DNS servers
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers:
+          - "{{ dc_private_ip }}"
+          - "{{ dc2_private_ip }}"
+
+    # =====================================================
+    # PREPARE THE DEDICATED AD DS DATA DISK
+    # =====================================================
+
+    - name: Discover the AD DS managed disk
+      ansible.windows.win_powershell:
+        script: |
+          $disk = Get-Disk | Where-Object {
+              $_.Size -eq (4098GB)
+          }
+
+          if (-not $disk) {
+              throw 'Unable to locate the 4098 GB AD DS managed disk.'
+          }
+
+          $disk.Number
+      register: adds_disk
+      changed_when: false
+
+    - name: Initialize the AD DS managed disk
+      community.windows.win_initialize_disk:
+        disk_number: "{{ adds_disk.output[0] | int }}"
+        style: gpt
+
+    - name: Create the AD DS partition
+      community.windows.win_partition:
+        disk_number: "{{ adds_disk.output[0] | int }}"
+        drive_letter: F
+        partition_size: -1
+        state: present
+
+    - name: Format the AD DS volume
+      community.windows.win_format:
+        drive_letter: F
+        file_system: ntfs
+        new_label: ADDS
+        allocation_unit_size: 4096
+
+    - name: Create NTDS directory
+      ansible.windows.win_file:
+        path: F:\NTDS
+        state: directory
+
+    - name: Create SYSVOL directory
+      ansible.windows.win_file:
+        path: F:\SYSVOL
+        state: directory
+
+    # =====================================================
+    # JOIN THE EXISTING DOMAIN
+    # =====================================================
+
+    - name: Join the existing Active Directory domain
+      microsoft.ad.membership:
+        dns_domain_name: "{{ ad_domain }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        state: domain
+        reboot: true
+        reboot_timeout: 1200
+      register: domain_join
+
+    - name: Wait until the server has joined the domain
+      ansible.windows.win_shell: |
+        $cs = Get-CimInstance Win32_ComputerSystem
+
+        if ($cs.PartOfDomain -and $cs.Domain -eq "{{ ad_domain }}") {
+        Write-Output "DOMAIN_JOINED"
+        }
+        else {
+        throw "Not joined yet."
+        }
+      register: domain_ready
+      changed_when: false
+      retries: 12
+      delay: 15
+      until: "'DOMAIN_JOINED' in domain_ready.stdout"
+
+    # =====================================================
+    # PROMOTE AS AN ADDITIONAL DOMAIN CONTROLLER
+    # =====================================================
+
+    - name: Verify the existing Domain Controller is reachable
+      ansible.windows.win_shell: |
+        nltest /dsgetdc:{{ ad_domain }}
+      register: dc_discovery
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: dc_discovery.rc == 0
+
+    - name: Promote host to an additional Domain Controller ({{ ad_domain }})
+      microsoft.ad.domain_controller:
+        dns_domain_name: "{{ ad_domain }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        safe_mode_password: "{{ safe_mode_password }}"
+        install_dns: true
+        state: domain_controller
+        database_path: "F:\\NTDS"
+        domain_log_path: "F:\\NTDS"
+        sysvol_path: "F:\\SYSVOL"
+        reboot: true
+        reboot_timeout: 1200
+      register: dc_promote
+
+
+
+    # =====================================================
+    # DNS FORWARDER -> AZURE RECURSIVE RESOLVER
+    # =====================================================
+
+    - name: Configure DNS forwarder to the Azure recursive resolver
+      ansible.windows.win_shell: |
+        $fwd = '{{ dns_forwarder }}'
+        $current = @((Get-DnsServerForwarder -ErrorAction SilentlyContinue).IPAddress |
+          ForEach-Object { $_.IPAddressToString })
+
+        if ($current -contains $fwd) {
+          Write-Output "PRESENT"
+        }
+        else {
+          Set-DnsServerForwarder -IPAddress $fwd -PassThru | Out-Null
+          Write-Output "SET"
+        }
+      register: dns_fwd
+      changed_when: "'SET' in dns_fwd.stdout"
+
+    # # =====================================================
+    # # VERIFY ACTIVE DIRECTORY
+    # # =====================================================
+
+    - name: Verify the AD forest and domain
+      ansible.windows.win_shell: |
+        $d = Get-ADDomain -ErrorAction Stop
+        $f = Get-ADForest -ErrorAction Stop
+        "DOMAIN=$($d.DNSRoot) FOREST=$($f.RootDomain)"
+      register: ad_verify
+      changed_when: false
+      failed_when: ad_domain not in ad_verify.stdout
+
+    - name: Verify Active Directory replication
+      ansible.windows.win_shell: |
+        repadmin /replsummary
+      register: replication
+      changed_when: false
+
+    - name: Verify SYSVOL replication
+      ansible.windows.win_shell: |
+        dcdiag /test:sysvolcheck /test:advertising
+      register: sysvol
+      changed_when: false
+
+    - name: Verify DNS resolves the AD domain
+      ansible.windows.win_shell: |
+        Resolve-DnsName -Name '{{ ad_domain }}' -Type SOA -ErrorAction Stop | Out-Null
+        Write-Output "DNS_OK"
+      register: dns_verify
+      changed_when: false
+      failed_when: "'DNS_OK' not in dns_verify.stdout"
+
+    - name: Verify Global Catalog
+      ansible.windows.win_shell: |
+        Get-ADDomainController -Identity $env:COMPUTERNAME |
+        Select HostName,IsGlobalCatalog
+      register: gc_verify
+      changed_when: false
+
+    - name: Report Secondary Domain Controller status
+      ansible.builtin.debug:
+        msg: >-
+          Secondary Domain Controller ready.
+          {{ ad_verify.stdout | trim }}

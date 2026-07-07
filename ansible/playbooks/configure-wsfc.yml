@@ -1,0 +1,142 @@
+---
+# =====================================================================
+# CONFIGURE WINDOWS SERVER FAILOVER CLUSTER (WSFC)
+# ---------------------------------------------------------------------
+# Builds the domain-based WSFC that underpins the Always On Availability Group.
+# Runs AFTER windows-dbdrive-configuration.yml (both SQL nodes are domain-joined)
+# and BEFORE sql-server-on-windows.yml (SQL install assumes the cluster exists).
+#
+# Responsibilities (Microsoft-supported sequence):
+#   1. Install the Failover-Clustering feature + management tools on both nodes.
+#   2. Run Microsoft's cluster validation (Test-Cluster).
+#   3. Create the WSFC with a static Cluster Name Object (CNO) IP.
+#   4. Configure quorum as a Cloud Witness — Microsoft's recommended quorum for
+#      Always On AGs on Azure VMs (a disk witness would require Azure shared disks).
+#   5. Verify cluster health and that both SQL nodes are Up members.
+#
+# This playbook owns clustering ONLY — SQL Server install/config lives in
+# sql-server-on-windows.yml. It is fully idempotent: the feature install is a
+# no-op when present, and cluster creation/validation are skipped when the cluster
+# already exists. Cluster operations run once (on the first node) against the
+# whole node set.
+# =====================================================================
+- name: Configure the Windows Server Failover Cluster
+  hosts: windows_vm
+  gather_facts: false
+
+  # Cluster operations require a DOMAIN administrator, not the per-node local
+  # 'sqladmin': New-Cluster creates the Cluster Name Object in AD, and Test-Cluster
+  # remote-administers the peer node — neither is possible with a local account
+  # that isn't an admin on the other node. Override the inventory connection
+  # credentials (local sqladmin) with the domain admin for this play only.
+  vars:
+    ansible_user: "{{ domain_admin_user }}"
+    ansible_password: "{{ domain_admin_password }}"
+
+    cluster_name: "{{ wsfc_cluster_name | default('sqlcluster') }}"
+    cluster_ip: "{{ wsfc_cluster_ip }}"
+    cluster_nodes: "{{ groups['windows_vm'] }}"
+    # PowerShell array literal: "node1","node2"
+    cluster_nodes_ps: "{{ groups['windows_vm'] | map('to_json') | join(',') }}"
+    witness_account: "{{ witness_sa }}"
+    witness_access_key: "{{ witness_key }}"
+
+  tasks:
+    - name: Install the Failover Clustering feature and management tools
+      ansible.windows.win_feature:
+        name:
+          - Failover-Clustering
+          - RSAT-Clustering
+          - RSAT-Clustering-PowerShell
+          - RSAT-Clustering-CmdInterface
+        state: present
+        include_management_tools: true
+      register: fc_feature
+
+    - name: Reboot the node if the clustering feature install requires it
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+        post_reboot_delay: 30
+      when: fc_feature.reboot_required
+
+    # =====================================================
+    # CLUSTER CREATION (run once, against the full node set)
+    # =====================================================
+    - name: Check whether the failover cluster already exists
+      ansible.windows.win_shell: |
+        try { (Get-Cluster -ErrorAction Stop).Name } catch { 'NONE' }
+      register: existing_cluster
+      changed_when: false
+      run_once: true
+
+    - name: Record whether the cluster already exists
+      ansible.builtin.set_fact:
+        cluster_exists: "{{ cluster_name in existing_cluster.stdout }}"
+      run_once: true
+
+    - name: Validate the cluster configuration (Test-Cluster)
+      ansible.windows.win_shell: |
+        Test-Cluster -Node @({{ cluster_nodes_ps }}) `
+          -Include "Inventory","Network","System Configuration" | Out-Null
+        Write-Output "VALIDATED"
+      register: cluster_validate
+      changed_when: false
+      failed_when: "'VALIDATED' not in cluster_validate.stdout"
+      run_once: true
+      when: not cluster_exists
+
+    - name: Create the Windows Server Failover Cluster
+      ansible.windows.win_shell: |
+        New-Cluster -Name '{{ cluster_name }}' -Node @({{ cluster_nodes_ps }}) `
+          -StaticAddress '{{ cluster_ip }}' -NoStorage | Out-Null
+        Write-Output "CREATED"
+      register: cluster_create
+      changed_when: "'CREATED' in cluster_create.stdout"
+      run_once: true
+      when: not cluster_exists
+
+    # =====================================================
+    # QUORUM — CLOUD WITNESS
+    # -----------------------------------------------------
+    # TLS 1.2 must be forced before contacting the storage endpoint. Idempotent:
+    # skips if a Cloud Witness is already the configured quorum resource.
+    # =====================================================
+    - name: Configure Cloud Witness quorum
+      ansible.windows.win_shell: |
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $q = Get-ClusterQuorum
+        if ($q.QuorumResource -and $q.QuorumResource.Name -match 'Cloud Witness') {
+          Write-Output "PRESENT"
+        } else {
+          Set-ClusterQuorum -CloudWitness `
+            -AccountName '{{ witness_account }}' `
+            -AccessKey '{{ witness_access_key }}' | Out-Null
+          Write-Output "SET"
+        }
+      register: quorum
+      changed_when: "'SET' in quorum.stdout"
+      run_once: true
+
+    # =====================================================
+    # VERIFY CLUSTER HEALTH + NODE MEMBERSHIP
+    # =====================================================
+    - name: Verify cluster health and that both SQL nodes are Up
+      ansible.windows.win_shell: |
+        $c = Get-Cluster -ErrorAction Stop
+        $nodes = Get-ClusterNode
+        $down = @($nodes | Where-Object { $_.State -ne 'Up' })
+        if ($down.Count -gt 0) { throw "Cluster nodes not Up: $($down.Name -join ',')" }
+        if ($nodes.Count -lt {{ cluster_nodes | length }}) {
+          throw "Expected {{ cluster_nodes | length }} nodes, found $($nodes.Count)"
+        }
+        "CLUSTER=$($c.Name) NODES=$($nodes.Name -join ',') STATES=$($nodes.State -join ',')"
+      register: cluster_health
+      changed_when: false
+      run_once: true
+
+    - name: Report cluster status
+      ansible.builtin.debug:
+        msg: >-
+          WSFC ready — {{ cluster_health.stdout | trim }};
+          quorum {{ quorum.stdout | trim }} (Cloud Witness on {{ witness_account }}).
+      run_once: true

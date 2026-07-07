@@ -83,6 +83,14 @@
     sql_default_log_dir: 'G:\SQLLOG'
     sql_backup_dir: 'H:\SQLBACKUP'
 
+    sql_service_account: "{{ ad_domain_name }}\\svc_sqlengine"
+    sql_agent_service_account: "{{ ad_domain_name }}\\svc_sqlagent"
+
+    # The service accounts were created during configure-active-directory.yml
+    # using the Safe Mode password.
+    sql_service_password: "{{ ad_safe_mode_password }}"
+    sql_agent_service_password: "{{ ad_safe_mode_password }}"
+
     # Engine features installed on a FRESH install (DBA wizard selections):
     # database engine + Replication + Full-Text/Semantic search. (SSAS skipped.)
     sql_features: "SQLENGINE,REPLICATION,FULLTEXT"
@@ -113,18 +121,13 @@
     # must be granted alongside the OS admin.
     sql_drive_acl_users:
       - "{{ ansible_user | default('sqladmin') }}"
-      - 'NT AUTHORITY\SYSTEM'
-      - 'NT SERVICE\MSSQLSERVER'
+      - "{{ sql_service_account }}"
+      - "{{ sql_agent_service_account }}"
 
-    # WSFC / Always On prerequisites
+    # Always On / HADR endpoint (the WSFC itself is built earlier by
+    # configure-wsfc.yml — see the preconditions note in the play header).
     hadr_endpoint_port: 5022
     hadr_endpoint_name: "Hadr_endpoint"
-    wsfc_features:
-      - Failover-Clustering
-      - RSAT-Clustering
-      - RSAT-Clustering-PowerShell
-      - RSAT-Clustering-AutomationServer
-      - RSAT-Clustering-CmdInterface
 
   tasks:
     # =====================================================
@@ -138,46 +141,21 @@
         state: directory
 
     # =====================================================
-    # SECTION — WINDOWS FAILOVER CLUSTERING PREREQUISITE (OS feature only)
+    # PRECONDITIONS (owned by earlier pipeline stages — NOT this play)
     # -----------------------------------------------------
-    # Install and validate the Failover-Clustering Windows features. This is the
-    # ONE clustering step with no SQL dependency, so it runs early — before the
-    # engine install — to get its (possible) reboot out of the way without
-    # disrupting a freshly-installed engine.
-    #   1. Install Failover-Clustering Windows features
-    #   2. Reboot if the feature install requires it
-    #   3. Validate the feature is installed
+    # By the time this play runs, the domain-based clustering foundation is already
+    # in place:
+    #   • Active Directory + DNS       -> configure-domain-controller.yml
+    #   • Both nodes domain-joined     -> windows-dbdrive-configuration.yml
+    #   • Windows Server Failover      -> configure-wsfc.yml (feature install,
+    #     Cluster created + validated     Test-Cluster, New-Cluster, Cloud Witness)
     #
-    # NOTE — the SQL-dependent half of Always On (Enable-SqlAlwaysOn, the HADR
-    # endpoint, and the verify) was MOVED OUT of this section to the
-    # "ALWAYS ON / HADR ENABLEMENT" section near the END of this play. It used to
-    # run here, at the top, which was a dependency inversion: enabling HADR needs
-    # the engine installed + running AND the SqlServer PowerShell module present
-    # (Enable-SqlAlwaysOn / Invoke-Sqlcmd), neither of which exists this early.
-    # See that section's header for the full rationale.
+    # This play therefore focuses EXCLUSIVELY on SQL Server: engine + FCI/AG
+    # install, SSMS, file locations, tuning, logins, and Always On/HADR enablement.
+    # The Failover-Clustering feature install + cluster creation that used to be
+    # stubbed here were REMOVED — they now belong to configure-wsfc.yml. Do not
+    # re-introduce clustering tasks here (single ownership per stage).
     # =====================================================
-
-    # - name: Install Windows Failover Clustering features
-    #   ansible.windows.win_feature:
-    #     name: "{{ wsfc_features }}"
-    #     state: present
-    #     include_management_tools: true
-    #   register: wsfc_feature_install
-
-    # - name: Reboot if Failover-Clustering feature install requires it
-    #   ansible.windows.win_reboot:
-    #     reboot_timeout: 600
-    #     post_reboot_delay: 30
-    #   when: wsfc_feature_install.reboot_required | default(false)
-
-    # - name: Validate Failover-Clustering feature is installed
-    #   ansible.windows.win_shell: |
-    #     $feat = Get-WindowsFeature -Name Failover-Clustering
-    #     if ($feat.InstallState -ne 'Installed') {
-    #       throw "Failover-Clustering feature is not installed: InstallState=$($feat.InstallState)"
-    #     }
-    #     Write-Output "Failover-Clustering: INSTALLED"
-    #   changed_when: false
 
     # =====================================================
     # IDEMPOTENCY GATE — is the engine COMPLETELY installed?
@@ -421,8 +399,10 @@
         "{{ sql_setup_path }}" /Q /ACTION=Install
         /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE
         /FEATURES={{ sql_features }} /INSTANCENAME=MSSQLSERVER
-        /SQLSVCACCOUNT="NT AUTHORITY\System"
-        /AGTSVCACCOUNT="NT AUTHORITY\System"
+        /SQLSVCACCOUNT="{{ sql_service_account }}"
+        /SQLSVCPASSWORD="{{ sql_service_password }}"
+        /AGTSVCACCOUNT="{{ sql_agent_service_account }}"
+        /AGTSVCPASSWORD="{{ sql_agent_service_password }}"
         /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
         /SECURITYMODE=SQL /SAPWD="{{ sa_password }}"
         /INSTANCEDIR="{{ sql_instance_dir }}"
@@ -617,7 +597,7 @@
         Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
       changed_when: false
 
-    # - name: Install the SqlServer PowerShell module (provides Invoke-Sqlcmd)
+    - name: Install the SqlServer PowerShell module (provides Invoke-Sqlcmd)
       ansible.windows.win_shell: >-
         [Net.ServicePointManager]::SecurityProtocol =
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;
@@ -838,7 +818,7 @@
       ansible.windows.win_user_right:
         name: SeManageVolumePrivilege
         users:
-          - 'NT SERVICE\MSSQLSERVER'
+          - "{{ sql_service_account }}"
         action: add
       register: ifi_right
 
@@ -1055,13 +1035,13 @@
     #   to create the endpoint on an instance where IsHadrEnabled=0 raises
     #   SQL Error 1412 ("HADR is not enabled on this SQL Server instance").
     #
-    # Cross-node certificate trust for a workgroup (no-AD) cluster:
-    #   The endpoint created here uses default WINDOWS NEGOTIATE authentication.
-    #   In a no-AD workgroup cluster, cross-node trust requires certificate-based
-    #   HADR endpoints. That cert-exchange step (CREATE CERTIFICATE, BACKUP, copy,
-    #   RESTORE on peer, GRANT CONNECT) is performed separately after the cluster
-    #   is formed — it is not automated here because it requires coordinated
-    #   access to both nodes during cluster setup.
+    # Cross-node trust (domain-joined cluster):
+    #   The endpoint uses default WINDOWS NEGOTIATE authentication. Because both
+    #   nodes are now members of the Active Directory domain (joined in
+    #   windows-dbdrive-configuration.yml) and the WSFC was built in the domain
+    #   (configure-wsfc.yml), Kerberos provides cross-node authentication for the
+    #   HADR endpoint automatically — the manual certificate exchange required by
+    #   the former workgroup (no-AD) design is no longer needed.
     # =====================================================
     - name: Enable Always On Availability Groups
       ansible.windows.win_shell: |

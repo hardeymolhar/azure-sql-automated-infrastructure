@@ -156,6 +156,122 @@
         label: "{{ item.drive_letter }}:\\{{ item.dir }}"
 
     # =====================================================
+    # ACTIVE DIRECTORY PREPARATION — DNS + DOMAIN JOIN
+    # -----------------------------------------------------
+    # With the data drives ready, prepare the OS for clustering: point DNS at the
+    # Domain Controller, PROVE the AD locator records resolve and the DC is
+    # reachable, then join the domain. This play deliberately does NOT install
+    # Windows Server Failover Clustering — that belongs to configure-wsfc.yml.
+    # Any prerequisite check that fails aborts the run immediately (fail-fast).
+    #
+    # DNS is set authoritatively at the Azure NIC level by network.sh; the
+    # in-guest task below is an idempotent safety net plus the flush/register that
+    # Microsoft recommends before a domain join. Domain members must use AD DNS
+    # ONLY, so a single server (the DC) is configured.
+    # =====================================================
+
+    - name: Install Telnet Client
+      ansible.windows.win_feature:
+        name: Telnet-Client
+        state: present
+
+    - name: Point the preferred DNS server at the Domain Controller
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers:
+          - "{{ dc_private_ip }}"
+          - "{{ dc2_private_ip }}"
+
+    - name: Flush the DNS resolver cache
+      ansible.windows.win_command: ipconfig /flushdns
+      changed_when: false
+
+    - name: Register the node's DNS records
+      ansible.windows.win_command: ipconfig /registerdns
+      changed_when: false
+
+    - name: Flush the DNS client cache
+      ansible.windows.win_command: ipconfig /flushdns
+      changed_when: false
+
+    - name: Verify domain name resolution ({{ ad_domain_name }})
+      ansible.windows.win_shell: |
+        try { Resolve-DnsName -Name '{{ ad_domain_name }}' -Type A -ErrorAction Stop | Out-Null; 'OK' }
+        catch { 'FAIL' }
+      register: dns_domain_res
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: "'OK' in dns_domain_res.stdout"
+
+    - name: Verify Domain Controller hostname resolution (DC locator)
+      ansible.windows.win_shell: |
+        $r = nltest /dsgetdc:{{ ad_domain_name }}
+        if ($LASTEXITCODE -ne 0) { throw "nltest /dsgetdc failed: $r" }
+        $r -join "`n"
+      register: dc_locator
+      changed_when: false
+      failed_when: dc_locator.rc != 0
+
+    - name: Verify LDAP SRV record resolution
+      ansible.windows.win_shell: |
+        Resolve-DnsName -Name '_ldap._tcp.dc._msdcs.{{ ad_domain_name }}' -Type SRV -ErrorAction Stop | Out-Null
+        Write-Output "OK"
+      register: ldap_srv
+      changed_when: false
+      failed_when: "'OK' not in ldap_srv.stdout"
+
+    - name: Verify Kerberos SRV record resolution
+      ansible.windows.win_shell: |
+        Resolve-DnsName -Name '_kerberos._tcp.{{ ad_domain_name }}' -Type SRV -ErrorAction Stop | Out-Null
+        Write-Output "OK"
+      register: kerberos_srv
+      changed_when: false
+      failed_when: "'OK' not in kerberos_srv.stdout"
+
+    - name: Verify communication with the Domain Controller (LDAP 389 + Kerberos 88)
+      ansible.windows.win_shell: |
+        $dc = '{{ dc_private_ip }}'
+        $ldap = (Test-NetConnection -ComputerName $dc -Port 389).TcpTestSucceeded
+        $krb  = (Test-NetConnection -ComputerName $dc -Port 88).TcpTestSucceeded
+        if ($ldap -and $krb) { 'REACHABLE' } else { "UNREACHABLE ldap=$ldap krb=$krb" }
+      register: dc_comm
+      changed_when: false
+      failed_when: "'REACHABLE' not in dc_comm.stdout"
+
+    - name: Join the SQL Server node to the Active Directory domain
+      microsoft.ad.membership:
+        dns_domain_name: "{{ ad_domain_name }}"
+        domain_admin_user: "{{ domain_admin_user }}"
+        domain_admin_password: "{{ domain_admin_password }}"
+        state: domain
+        reboot: true
+        reboot_timeout: 1200
+      register: domain_join
+
+    - name: Verify successful domain membership
+      ansible.windows.win_shell: |
+        $cs = Get-CimInstance Win32_ComputerSystem
+        if ($cs.PartOfDomain -and $cs.Domain -eq '{{ ad_domain_name }}') { 'JOINED' }
+        else { "NOTJOINED PartOfDomain=$($cs.PartOfDomain) Domain=$($cs.Domain)" }
+      register: domain_member
+      changed_when: false
+      failed_when: "'JOINED' not in domain_member.stdout"
+
+    - name: Report domain membership
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} joined {{ ad_domain_name }} ({{ domain_member.stdout | trim }})"
+
+    - name: Move SQL Server computer accounts into the Clusters OU
+      microsoft.ad.object:
+        identity: "CN={{ item }},CN=Computers,{{ domain_dn }}"
+        path: "OU=Clusters,{{ domain_dn }}"
+        state: moved
+      loop:
+        - "{{ win_vm_name }}"
+        - "{{ win_vm_name_2 }}"
+
+    # =====================================================
     # VERIFY
     # =====================================================
     - name: Gather the resulting volumes
