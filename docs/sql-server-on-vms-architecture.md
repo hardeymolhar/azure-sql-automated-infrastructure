@@ -13,371 +13,6 @@ instance, and the clustering layer.
 
 ---
 
-## 🏛️ Active Directory Architecture
-
-The introduction of a dedicated Active Directory Domain Services (AD DS) and DNS server in this architecture enables secure, robust identity and authentication for Windows Server Failover Clustering (WSFC) and SQL Server Always On deployments. This approach supports Kerberos authentication, cluster and service account management, and future hybrid identity scenarios.
-
-### Problem
-
-*Workgroup* deployments lack secure, centralized authentication and cannot support Kerberos or clustered identity. Azure AD DS is not suitable for hosting WSFC or SQL Server service accounts. A dedicated AD DS and DNS VM is required to provide:
-- Kerberos authentication for WSFC and SQL Server
-- Managed service accounts and group policy
-- DNS integration for dynamic cluster and SQL listener records
-- A foundation for future hybrid (on-premises/Cloud) identity scenarios
-
-### Alternatives Considered
-
-| Option                     | Pros                                    | Cons                                                                                      |
-|----------------------------|-----------------------------------------|-------------------------------------------------------------------------------------------|
-| Workgroup (no domain)      | Simple, no domain admin required        | No Kerberos, no secure WSFC/SQL auth, no managed service accounts, weak cluster support   |
-| Azure AD DS                | Managed, no VM to patch                 | Not supported for WSFC, no custom OU/service account control, no DNS integration for AG   |
-| Dedicated AD DS VM (chosen)| Full control, supports all scenarios    | Must deploy, secure, and manage a domain controller                                       |
-
-### Decision
-
-Two dedicated AD DS + DNS domain controllers are deployed for the SQL infrastructure, spanning two availability zones:
-
-- **`dc-res-ind-112`** (zone 1) — the **forest root** of `sqlfci.local`, promoted by [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) (`microsoft.ad.domain`, new-forest path).
-- **`dc2-res-ind-112`** (zone 2) — an **additional domain controller (replica)** in the same forest, joined and promoted by [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) (`microsoft.ad.membership` + `microsoft.ad.domain_controller`).
-
-Both are Global Catalog servers, and directory changes replicate between them (see **Domain Controller Replication Verification** under Operational Validation for the live evidence).
-
-### Why
-
-- Kerberos authentication is required for WSFC and SQL Server Always On.
-- Cluster Name Objects (CNOs) and Virtual Computer Objects (VCOs) must be created and managed in Active Directory.
-- Full control over OUs, service accounts, and group policies is needed for secure cluster/service operation.
-- DNS must be tightly integrated for dynamic registration of cluster and SQL listener IPs.
-- A second domain controller provides identity and DNS redundancy: if one DC (or its availability zone) is lost, authentication, Kerberos, and AD-integrated DNS continue from the surviving replica — essential because WSFC and SQL Always On depend on continuous AD/DNS availability.
-- Lays the groundwork for hybrid identity and future gMSA support.
-
-### Future Evolution
-
-- Extend AD DS to hybrid (on-premises) scenarios by establishing trust or replication.
-- Migrate service accounts to Group Managed Service Accounts (gMSA) for improved security.
-- Integrate with Azure AD for cloud-based identity federation.
-
----
-
-## ⚙️ Active Directory Automation Strategy ( CONVERT TO MERMAID )
-
-This architecture separates the automation of Active Directory infrastructure from the administration of directory objects and policies. The following playbooks each have focused responsibilities:
-
-- **configure-domain-controller.yml**: Provisions and promotes the first Windows Server VM to the forest-root domain controller, installs AD DS and DNS roles, and configures domain basics.
-- **configure-dc2.yml**: Joins a second Windows Server VM to the existing domain and promotes it to an additional domain controller (replica) in the same forest, giving the platform redundant AD DS and DNS across two availability zones.
-- **configure-active-directory.yml**: Creates OUs, service accounts, groups, and policies required for SQL and WSFC, but does not perform domain controller promotion.
-- **windows-dbdrive-configuration.yml**: Detects, partitions, and formats data disks on SQL nodes, ensuring correct drive letters and NTFS configuration.
-- **configure-wsfc.yml**: Joins SQL nodes to the domain, installs failover clustering features, and creates the WSFC cluster and cluster objects.
-- **sql-server-on-windows.yml**: Installs and configures SQL Server, sets up AGs and listeners, and binds service accounts.
-
-**Separation rationale:**  
-Active Directory infrastructure (promotion, DNS, core roles) is automated separately from Active Directory administration (OUs, accounts, permissions). This separation:
-- Reduces blast radius of changes
-- Enables idempotent, safe re-runs of administrative tasks without risk to domain controller health
-- Facilitates delegation and future automation scalability
-
----
-
-## 🗂️ Organizational Unit Design (( CONVERT TO MERMAID ))
-
-The AD DS hierarchy is structured for clarity and least privilege:
-
-```
-domain.local
-├── Servers
-│   └── [SQL Node 1, SQL Node 2]
-├── Clusters
-│   └── [WSFC CNO, SQL Listener VCO]
-├── Service Accounts
-│   └── [SQLSvc, WSFCAdmin, ...]
-└── Groups
-    └── [SQLAdmins, ClusterAdmins, ...]
-```
-
-**Why dedicated OUs?**
-- The default `Computers` container cannot have GPOs linked or delegated permissions.
-- OUs allow for targeted GPO application and granular delegation.
-- Segregates SQL nodes, cluster identities, service accounts, and groups for clear management boundaries.
-
-**Purpose of each OU:**
-- **Servers**: Domain-joined SQL Server VMs (computer objects).
-- **Clusters**: Cluster Name Object (CNO) and Virtual Computer Objects (VCOs) for WSFC and SQL Listener.
-- **Service Accounts**: Domain accounts for SQL Server, agent, and cluster services.
-- **Groups**: Role-based AD groups for administration and service access.
-
----
-
-## 👤 Service Account Strategy
-
-**Rationale for dedicated SQL service accounts:**
-- Reduces attack surface compared to running as LocalSystem or Administrator.
-- Enables least privilege and auditability.
-- Required for Kerberos constrained delegation and future gMSA migration.
-
-**Comparison:**
-
-| Account Type                     | Pros                       | Cons                          |
-|----------------------------------|----------------------------|-------------------------------|
-| LocalSystem                      | Highest privilege, default | Too much privilege, security risk |
-| NetworkService                   | Lower privilege            | Shared identity, not suitable for SQL AGs |
-| Administrator                    | Full control               | Not recommended, excessive rights |
-| Domain Service Account (current) | Least privilege, auditable | Password rotation required    |
-| Group Managed Service Account (gMSA, future) | Automatic password mgmt, least privilege | Requires AD 2012+, not yet enabled here |
-
-**Design supports future migration to gMSAs** by using named domain accounts and OU structure that can be swapped for gMSAs with minimal disruption.
-
----
-
-## 🔄 Domain Join Strategy
-
-**Deployment order:**
-1. Domain controller and DNS VM is provisioned and promoted.
-2. Organizational Units (OUs), service accounts, and groups are created.
-3. SQL Server VMs are provisioned and joined to the domain.
-4. Computer objects are moved into the `Servers` OU *after* successful domain join.
-5. WSFC and SQL Server configuration proceeds.
-
-**Why not move SQL computer objects before domain join?**
-- The AD computer object is not created until the join completes.
-- Attempting to move a non-existent object fails.
-- Ensures OU policies and permissions are applied only after successful join.
-
----
-
-## 🏗️ Windows Server Failover Cluster Identity
-
-WSFC and SQL Server Always On require special AD objects for secure operation:
-
-- **Cluster Name Object (CNO):** The computer account representing the WSFC cluster. Created in the `Clusters` OU.
-- **Virtual Computer Object (VCO):** The computer account representing the AG listener ("SQL Listener"). Created by the cluster under the CNO.
-
-**Diagram:**
-
-```mermaid
-graph TD
-    subgraph Servers OU
-        N1["SQL Node 1"]
-        N2["SQL Node 2"]
-    end
-    subgraph Clusters OU
-        CNO["WSFC Cluster Name Object"]
-        VCO["SQL Listener (VCO)"]
-    end
-    N1 -- "Cluster Service" --> CNO
-    N2 -- "Cluster Service" --> CNO
-    CNO -- "Creates/manages" --> VCO
-    VCO -- "Listener IP" --> N1
-    VCO -- "Listener IP" --> N2
-```
-
-**OU Placement:**
-- SQL node computer objects reside in the `Servers` OU for GPO and admin separation.
-- CNO and VCO reside in the `Clusters` OU for delegated cluster permissions and isolation.
-
----
-
-## 🚀 Deployment Pipeline
-
-**End-to-end deployment flow:**
-
-```mermaid
-flowchart TD
-    A[Azure Infrastructure] --> B[Provision Domain Controller VM]
-    B --> C[Promote to AD DS & DNS]
-    C --> D[Configure OUs, Service Accounts, Groups]
-    D --> D2["Promote Second DC (replica) & verify replication"]
-    D2 --> E[Provision SQL Server VMs]
-    E --> F[Join SQL VMs to Domain]
-    F --> G[Move Computer Objects to Servers OU]
-    G --> H[Configure Data Disks/Drives]
-    H --> I[Install WSFC Features]
-    I --> J["Create WSFC Cluster (CNO)"]
-    J --> K[Configure Cluster Quorum/DNS]
-    K --> L[Install SQL Server]
-    L --> M[Configure SQL Service Accounts]
-    M --> N[Create Always On AG]
-    N --> O["Create SQL Listener (VCO)"]
-    O --> P[Validate HA/DR]
-```
-
----
-
-## 📘 Engineering Decisions and Lessons Learned
-
-### DNS Client Restart vs DNS Cache Flush
-**Problem:** After joining the domain and updating DNS, name resolution on SQL nodes was unreliable until reboot.
-**Alternatives Considered:**  
-- Restart DNS Client service  
-- Flush DNS cache (`ipconfig /flushdns`)  
-- Full reboot
-**Decision:** Restarting the DNS Client service is usually sufficient and less disruptive than a full reboot.
-**Why:** Ensures the node picks up new DNS settings and registrations immediately.
-
-### Discovering AD DS Managed Disk
-**Problem:** Identifying the correct disk to initialize and format for AD DS database and logs.
-**Alternatives Considered:**  
-- By disk number  
-- By Azure LUN  
-- By provisioned size (chosen)
-**Decision:** Select disk by matching the provisioned size.
-**Why:** Disk numbers and LUNs can vary depending on VM size and Azure deployment timing, but the size is unique and stable.
-
-### Separating AD DS Promotion from AD Administration
-**Problem:** Combining domain controller promotion with AD object administration risked idempotency and error recovery.
-**Alternatives Considered:**  
-- Single playbook for both roles  
-- Separate playbooks (chosen)
-**Decision:** Separate domain controller promotion (infrastructure) from management of OUs, accounts, and GPOs (administration).
-**Why:** Reduces risk, improves reusability, and allows safe re-runs of administrative tasks.
-
-### Moving Computer Objects Only After Domain Join
-**Problem:** Computer objects do not exist until domain join completes, so cannot be moved or managed in OUs.
-**Alternatives Considered:**  
-- Pre-create computer objects  
-- Move after join (chosen)
-**Decision:** Move computer objects into target OUs only after successful domain join.
-**Why:** Ensures correct object creation, avoids errors, and guarantees GPOs apply as intended.
-
----
-
-## ✅ Operational Validation
-
-The following table documents key validation commands and what each proves:
-
-| Area           | Command / Check                                      | What it Proves                                                   |
-|----------------|------------------------------------------------------|------------------------------------------------------------------|
-| Active Directory | `Get-ADDomain`, `Get-ADUser`, `Get-ADComputer`     | Domain controller is functional, objects exist                    |
-| AD Replication  | `repadmin /replsummary`, `Get-ADReplicationPartnerMetadata` | Both domain controllers replicate inbound and outbound with zero failures |
-| DNS             | `nslookup <domain>`, `Resolve-DnsName <listener>`   | AD-integrated DNS is resolving cluster and listener names         |
-| Domain Join     | `whoami`, `echo %USERDOMAIN%`, `nltest /dsgetdc:...` | Node is joined to domain, domain controller reachable             |
-| Storage         | `Get-Volume`, `fsutil fsinfo volumeinfo F:`         | Data/log/backup drives are present, formatted, correct settings   |
-| WSFC            | `Get-Cluster`, `Get-ClusterNode`, `Test-Cluster`    | Cluster is formed, nodes are up, CNO exists                      |
-| SQL Server      | `sqlcmd -S <listener> -E -Q "SELECT @@SERVERNAME"`  | SQL is running, listener is reachable, Windows auth works         |
-| Always On AG    | `Get-ClusterGroup`, `Get-SqlAvailabilityGroup`      | AG is created, synchronized, listener is online                   |
-
-Each validation demonstrates the intended outcome for its layer:
-- AD: Directory services are operational
-- AD Replication: Directory changes converge across both domain controllers
-- DNS: Cluster and SQL names resolve as expected
-- Domain Join: Nodes are correctly authenticated and managed
-- Storage: SQL disks are ready for use and follow best practices
-- WSFC: Cluster is healthy and CNO/VCOs are present
-- SQL: SQL Server is running and accessible through the cluster listener
-- AG: Always On high availability is functional
-
-### 🔁 Domain Controller Replication Verification
-
-The two-domain-controller topology is stood up by two playbooks: [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) promotes `dc-res-ind-112` as the **forest root** of `sqlfci.local`, and [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) joins and promotes `dc2-res-ind-112` as an **additional domain controller (replica)** in the same forest. The captures below are the live evidence that both DCs are running, share one forest, and actively replicate directory data. Red annotations highlight the values a reviewer should check to confirm the result is genuine.
-
-**1 — Both domain-controller VMs are running (Azure portal).** `dc-res-ind-112` and `dc2-res-ind-112` are both in the `Running` state in Central India.
-
-<img src="./images/dc-vms-running.png" alt="Azure portal showing dc-res-ind-112 and dc2-res-ind-112 both Running in Central India" width="820" />
-
-**2 — Both DCs are registered in one forest, and both are Global Catalogs.** `Get-ADDomainController` lists both hosts with their static private IPs (`10.10.4.4`, `10.10.4.5`); `Get-ADforest` shows a single domain `sqlfci.local` with both servers as Global Catalogs; `Get-ADReplicationPartnerMetadata` shows a recent `LastReplicationSuccess`.
-
-<img src="./images/dc-forest-and-replication.png" alt="Get-ADDomainController, Get-ADforest and replication partner metadata listing both DCs in one forest" width="820" />
-
-**3 — Replication is healthy in both directions.** `repadmin /replsummary` reports `0` failures for every source and destination DSA — no replication errors between `dc-res-ind-112` and `dc2-res-ind-112`, inbound or outbound.
-
-<img src="./images/dc-replication-summary.png" alt="repadmin /replsummary showing zero replication failures between both DCs" width="820" />
-
-**4 — A test object is created on DC1.** A `Test Replication` user (`test.replication@sqlfci.local`) is created on `dc-res-ind-112` (RDP host `20.219.53.47`) and appears in the `sqlfci.local/Users` container in Active Directory Users and Computers.
-
-<img src="./images/dc-test-user-created.png" alt="New-ADUser creating the Test Replication account on DC1, visible in ADUC" width="820" />
-
-**5 — The same object is visible on DC2.** Running `Get-ADUser test.replication` on `dc2-res-ind-112` (RDP host `20.219.145.108`) returns the identical object — same distinguished name and UPN — proving the create on DC1 replicated to DC2. The `hostname` output confirms the query ran on the second DC.
-
-<img src="./images/dc-test-user-replicated.png" alt="Get-ADUser on dc2-res-ind-112 returning the replicated Test Replication user" width="820" />
-
-Together these confirm the intended outcome of this layer: a redundant, actively replicating two-DC forest that WSFC and SQL Server Always On can depend on for Kerberos authentication and AD-integrated DNS.
-
----
-
-## ⚡ Parallelizing In-Guest Configuration (AD ∥ Linux, gated Windows)
-
-### Problem
-
-The original `vm-config.sh` script ran Active Directory promotion, Linux (RHEL) configuration, and Windows SQL/WSFC setup **strictly sequentially**, even though only one real dependency exists: Windows domain-joins its nodes and requires Kerberos authentication, so it must wait for Active Directory. Linux depends on neither AD nor Windows. Sequential execution wastes the sandbox's time-bound deployment window, paying the full sum of all three pipelines' wall-clock runtime instead of overlapping the independent ones.
-
-### Decision
-
-Split `vm-config.sh` into three independent scripts — `vm-config-ad.sh`, `vm-config-windows.sh`, `vm-config-linux.sh` — and orchestrate them with **native Bash job control** (`&`, `wait <pid>`, PID tracking) such that:
-- `vm-config-ad.sh` and `vm-config-linux.sh` start concurrently immediately after infrastructure is deployed (Phases 1–3 complete).
-- `vm-config-windows.sh` starts the instant `vm-config-ad.sh` succeeds — it never waits on `vm-config-linux.sh`.
-- If AD fails, Windows never starts.
-- If Linux fails, that never blocks or skips Windows (Windows' gate is AD's exit status only).
-- The orchestrator ([vm-config-orchestrator.sh](../scripts/shell/test-env/vm-config-orchestrator.sh)) tracks every pipeline's PID and exit status and reports a final summary once all have completed.
-
-### Why
-
-- **Cuts wall-clock time**: Overlapping independent paths uses the sandbox's fixed window more efficiently.
-- **Failure isolation**: A Linux/RHEL failure no longer silently skips the Windows/WSFC/AG path (which has no dependency on Linux); a failed AD pipeline correctly prevents Windows from starting (it depends on AD). Each pipeline's failure is reported and doesn't compromise unrelated paths.
-- **Native Bash only**: No external tooling (GNU Parallel, `nohup`, etc.) — simplicity, portability, reliability for lab-scale orchestration.
-
-### Challenges Found and Resolved
-
-**Inventory file race:** All three scripts source `env.conf` (which defines a single `INVENTORY_FILE="$PROJECT_ROOT/inventory.ini"`) and do `cat > "$INVENTORY_FILE" <<EOT` (truncate) immediately before their `ansible-playbook` calls. None of their `ansible-playbook` invocations pass `-i` — they rely on `ansible.cfg`'s default inventory path. Sequential execution is safe because one script's write is always consumed by its own play before the next script touches the file. **Concurrent execution would race**: one script's write could truncate the file out from under another script's in-flight `ansible-playbook` run. Ansible fails silently (plays targeting a missing hosts group log "skipping: no hosts matched" and exit 0), so the race would report success while silently skipping work.
-
-**Fix**: Each pipeline now gets its own inventory file (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`) and each script overrides `INVENTORY_FILE` locally right after sourcing `env.conf`, then passes `-i "$INVENTORY_FILE"` explicitly to every `ansible-playbook` call. This removes the shared mutable state entirely instead of narrowing a race window. New vars in `env.conf`:
-```bash
-AD_INVENTORY_FILE="$PROJECT_ROOT/inventory-ad.ini"
-WINDOWS_INVENTORY_FILE="$PROJECT_ROOT/inventory-windows.ini"
-LINUX_INVENTORY_FILE="$PROJECT_ROOT/inventory-linux.ini"
-```
-
-**Unbound variable in vm-config-linux.sh:** The script references `$LAB_BLOB_SAS_URL`, which is only ever generated inside `vm-config-windows.sh` (a 19-line block that fetches the storage account key and generates a SAS token). Run standalone under `set -u`, Linux crashes with "unbound variable" before SQL Server install.
-
-**Fix**: Linux now generates its own SAS URL locally (copy the same 19-line block from Windows) so it's self-contained and can succeed standalone, independent of Windows.
-
-### Live Monitoring
-
-**Problem**: The first orchestrator version redirected each pipeline's output wholesale to its log file (`> "$LOG" 2>&1 &`). Safe for concurrency, but blind while running: an Ansible `fatal:` inside a pipeline produced no terminal output until that pipeline exited, and the summary showed only an exit code and a log path. An operator watching a 30–60 minute deployment had no live signal that a task had already failed unless they knew to `tail -f` the logs in a second terminal.
-
-**Decision**: Stream every pipeline's output live into the orchestrator terminal, each line tagged `[ad]` / `[linux]` / `[windows]`, while `tee` keeps an untagged copy in the per-pipeline log:
-
-```bash
-run_pipeline() {
-  local script="$1" log="$2" tag="$3"
-  "./$script" 2>&1 | tee "$log" | awk -v tag="$tag" '{ print tag $0; fflush() }'
-}
-```
-
-Additionally, a `FAILED` summary row now prints the pipeline's Ansible `fatal:`/`failed:` lines plus the last 25 log lines, so the failing task is identified without opening the log file.
-
-**Why these mechanics**:
-- **`awk` with `fflush()`, not `sed`**: `sed` block-buffers when its stdout is not a tty (e.g. the orchestrator itself piped through `tee`), which would delay output and defeat live monitoring. `awk`'s `fflush()` forces line-buffered output on both GNU (Linux CI) and BSD (macOS control node).
-- **Tag applied *after* `tee`**: log files stay untagged and pristine for post-mortem grep/diff; only the terminal view carries the prefix.
-- **Exit-status integrity**: `set -o pipefail` is inherited by the background subshell, so `wait <pid>` still returns the pipeline *script's* status (`tee`/`awk` always succeed) — the dependency-graph gating is untouched.
-
-**Alternative considered**: keep the orchestrator quiet and print ready-to-paste `tail -f .logs/vm-config-<ts>/*.log` commands for a second terminal. Rejected: it depends on the operator remembering to open that terminal, and a sandbox deployment is typically watched from a single session. The `tail -f` option remains available anyway since the log files still exist.
-
-**Consequence accepted**: terminal output from concurrent pipelines interleaves (Ansible's multi-line task blocks can mix); the per-line tag keeps every line attributable, and the clean per-pipeline logs preserve uninterleaved streams.
-
-### Alternatives Considered
-
-| Approach                          | Pros                                   | Cons                                                         |
-|-----------------------------------|----------------------------------------|--------------------------------------------------------------|
-| Keep fully sequential             | Simplest, no coordination needed       | Wastes 30–60% of sandbox window; failure propagates         |
-| GNU Parallel / xargs -P           | Well-tested, familiar                  | External dependency, not on macOS by default                 |
-| Shared inventory + orchestrator   | Still parallel, fewer files             | Still one shared-mutable path; race window just narrower     |
-| Per-pipeline inventory files (✓)  | No shared state; clear ownership       | 3 new .gitignored files                                      |
-
-### Consequences
-
-- **Wall-clock deploy time**: Reduced from `AD + Linux + Windows` to `max(AD, Linux) + Windows` — typically 30–50% faster in the sandbox.
-- **New output structure**: Three per-pipeline log files under `.logs/vm-config-<timestamp>/` (gitignored), plus a live tagged stream of all pipelines in the orchestrator terminal. A failure in any pipeline is visible the moment it happens and again in the summary (with the fatal-task excerpt).
-- **No rollback on Ctrl-C**: The orchestrator's `trap` signals its three direct children but doesn't roll back an in-flight AD promotion or WSFC formation — an interrupted run needs manual operator verification of domain controller and cluster health before re-running.
-- **Inventory files are gitignored**: Each pipeline writes its own plaintext inventory with credentials (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`). Not tracked in git (unlike the existing `inventory.ini`, which is pre-git tracked as a separate security concern).
-
-### Operational Impact
-
-- **Deployment**: `db-deploy.sh` now calls `./vm-config-orchestrator.sh` instead of `./vm-config.sh`. The orchestrator is idempotent — re-running a failed deployment calls the same three scripts with the same inputs; each script is already idempotent (Ansible plays, `az` CLI idempotence), so re-running is safe.
-- **Observability**: All pipeline output streams live in the orchestrator terminal, line-tagged `[ad]` / `[linux]` / `[windows]`. Untagged per-pipeline copies land under `.logs/vm-config-<timestamp>/` (`vm-config-ad.log`, `vm-config-linux.log`, `vm-config-windows.log`). A failure prints the exit code, log path, the Ansible `fatal:` lines, and the last 25 log lines in the summary; `tail -f` on the log files remains available for a single-pipeline view.
-- **On interrupt**: A Ctrl-C or SIGTERM sends signals to any in-flight pipelines but does not clean up Azure resources or roll back domain/cluster state — the user must verify DC and cluster health manually before re-running.
-- **Ansible configuration**: `ansible.cfg` still sets `inventory = ~/projects/.../inventory.ini` as the default, but it's no longer used by the three pipelines (each passes `-i` explicitly). The old `inventory.ini` is untouched and can still be used by future scripts or manual runs.
-
----
-
 ## 🔴 Problem Overview
 
 Running SQL Server yourself on VMs reintroduces every responsibility the PaaS service used
@@ -618,3 +253,394 @@ Key Vault also stores the CMK and the SSH key secrets. See
 [application-security-group.sh](../scripts/shell/test-env/application-security-group.sh).
 
 ---
+## 🏛️ Active Directory Architecture
+```mermaid
+flowchart LR
+
+    Users["Users & Applications"]
+
+    Listener["SQL Always On<br/>Listener"]
+
+    subgraph "SQL High Availability"
+        SQL1["SQL Server<br/>Primary"]
+        SQL2["SQL Server<br/>Secondary"]
+    end
+
+    subgraph "Identity Services"
+        DC1["AD DS + DNS<br/>Domain Controller 1"]
+        DC2["AD DS + DNS<br/>Domain Controller 2"]
+    end
+
+    Users --> Listener
+
+    Listener --> SQL1
+    Listener -. Automatic Failover .-> SQL2
+
+    SQL1 --- DC1
+    SQL1 --- DC2
+
+    SQL2 --- DC1
+    SQL2 --- DC2
+
+    DC1 <-->|Directory Replication| DC2
+```
+
+
+A dedicated Active Directory Domain Services (AD DS) and DNS server was introduced to provide the centralized identity, authentication, and name resolution required for Windows Server Failover Clustering (WSFC) and SQL Server Always On. This eliminates the limitations of workgroup-based deployments, enables secure Kerberos authentication and cluster identity management, and aligns the solution with Microsoft's recommended architecture for highly available SQL Server environments.
+
+
+### Alternatives Considered
+
+| Option                                                   |    Status    | Advantages                                                                                                                                                                                                                                                                                                                | Reason Not Selected / Trade-offs                                                                                                                                                                                        |
+| -------------------------------------------------------- | :----------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dedicated AD DS + DNS VMs**                            | ✅ **Chosen** | Fully supports Windows Server Failover Clustering (WSFC), SQL Server Always On, Kerberos authentication, Cluster Name Objects (CNOs), Virtual Computer Objects (VCOs), Group Policy, AD-integrated DNS, and future gMSA adoption. Provides full administrative control and high availability with two domain controllers. | Requires deployment, monitoring, patching, and ongoing management of domain controllers.                                                                                                                                |
+| **Workgroup (No Active Directory)**                      |  ❌ Rejected  | Simple to deploy with no domain infrastructure required.                                                                                                                                                                                                                                                                  | Does not support Microsoft's recommended architecture for WSFC and SQL Server Always On. Lacks Kerberos authentication, centralized identity management, managed service accounts, and reliable cluster administration. |
+| **Azure Active Directory Domain Services (Azure AD DS)** |  ❌ Rejected  | Fully managed directory service with reduced administrative overhead.                                                                                                                                                                                                                                                     | Does not provide the level of control and feature support required for WSFC and SQL Server Always On, including management of OUs, service accounts, and AD-integrated DNS required for the cluster environment.        |
+
+
+### Decision
+
+Two dedicated AD DS + DNS domain controllers are deployed for the SQL infrastructure, spanning two availability zones:
+
+- **`dc-res-ind-112`** (zone 1) — the **forest root** of `sqlfci.local`, promoted by [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) (`microsoft.ad.domain`, new-forest path).
+- **`dc2-res-ind-112`** (zone 2) — an **additional domain controller (replica)** in the same forest, joined and promoted by [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) (`microsoft.ad.membership` + `microsoft.ad.domain_controller`).
+
+Both are Global Catalog servers, and directory changes replicate between them (see **Domain Controller Replication Verification** under Operational Validation for the live evidence).
+
+---
+
+## ⚙️ Active Directory Automation Strategy ( CONVERT TO MERMAID )
+
+This architecture separates the automation of Active Directory infrastructure from the administration of directory objects and policies. The following playbooks each have focused responsibilities.
+
+> **Implementation Reference**
+>
+> **[View Ansible Playbooks](../ansible/playbooks/)**
+
+```mermaid
+flowchart TD
+
+    A["Provision Domain Controller<br/>(configure-domain-controller.yml)"]
+
+    B["Provision Replica Domain Controller<br/>(configure-dc2.yml)"]
+
+    C["Configure Active Directory<br/>OUs, Groups, Service Accounts & Policies<br/>(configure-active-directory.yml)"]
+
+    D["Prepare SQL Server Storage<br/>(windows-dbdrive-configuration.yml)"]
+
+    E["Configure Windows Server Failover Cluster (WSFC)<br/>(configure-wsfc.yml)"]
+
+    F["Install & Configure SQL Server Always On<br/>(sql-server-on-windows.yml)"]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+
+    classDef infra fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px;
+    classDef admin fill:#E3F2FD,stroke:#1565C0,stroke-width:2px;
+    classDef sql fill:#FFF8E1,stroke:#EF6C00,stroke-width:2px;
+
+    class A,B infra;
+    class C admin;
+    class D,E,F sql;
+```
+
+
+---
+
+## 🗂️ Organizational Unit Design 
+
+The AD DS hierarchy is structured for clarity and least privilege:
+
+```
+domain.local
+├── Servers
+│   └── [SQL Node 1, SQL Node 2]
+├── Clusters
+│   └── [WSFC CNO, SQL Listener VCO]
+├── Service Accounts
+│   └── [SQLSvc, WSFCAdmin, ...]
+└── Groups
+    └── [SQLAdmins, ClusterAdmins, ...]
+```
+
+**Purpose of each OU:**
+- **Servers**: Domain-joined SQL Server VMs (computer objects).
+- **Clusters**: Cluster Name Object (CNO) and Virtual Computer Objects (VCOs) for WSFC and SQL Listener.
+- **Service Accounts**: Domain accounts for SQL Server, agent, and cluster services.
+- **Groups**: Role-based AD groups for administration and service access.
+
+---
+
+## 🔄 Domain Join Strategy
+
+**Deployment order:**
+```mermaid
+flowchart LR
+
+    DC["1. Deploy AD DS + DNS<br/>Domain Controller"]
+
+    AD["2. Configure Active Directory<br/>OUs, Groups & Service Accounts"]
+
+    JOIN["3. Join SQL Server VMs<br/>to the Domain"]
+
+    MOVE["4. Move SQL Server Computer Objects<br/>to the Cluster OU"]
+
+    WSFC["5. Configure WSFC<br/>and SQL Server Always On"]
+
+    DC --> AD
+    AD --> JOIN
+    JOIN --> MOVE
+    MOVE --> WSFC
+
+    classDef infra fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px;
+    classDef admin fill:#E3F2FD,stroke:#1565C0,stroke-width:2px;
+    classDef sql fill:#FFF8E1,stroke:#EF6C00,stroke-width:2px;
+
+    class DC infra;
+    class AD admin;
+    class JOIN,MOVE,WSFC sql;
+```
+---
+
+## 🏗️ Windows Server Failover Cluster Identity
+
+WSFC and SQL Server Always On require special AD objects for secure operation:
+
+- **Cluster Name Object (CNO):** The computer account representing the WSFC cluster. Created in the `Clusters` OU.
+- **Virtual Computer Object (VCO):** The computer account representing the AG listener ("SQL Listener"). Created by the cluster under the CNO.
+
+**Diagram:**
+
+```mermaid
+graph TD
+
+    subgraph "Servers OU"
+        N1["SQL Server Node 1"]
+        N2["SQL Server Node 2"]
+    end
+
+    subgraph "Clusters OU"
+        CNO["Windows Server Failover Cluster<br/>Cluster Name Object (CNO)"]
+        VCO["SQL Availability Group Listener<br/>Virtual Computer Object (VCO)"]
+    end
+
+    N1 -->|"Participates in the cluster"| CNO
+    N2 -->|"Participates in the cluster"| CNO
+
+    CNO -->|"Creates and manages<br/>the Listener identity"| VCO
+
+    VCO -->|"Directs client connections<br/>to the active SQL node"| N1
+    VCO -. "Redirects after failover" .-> N2
+```
+
+**OU Placement:**
+- SQL node computer objects reside in the `Servers` OU for GPO and admin separation.
+- CNO and VCO reside in the `Clusters` OU for delegated cluster permissions and isolation.
+
+---
+
+## 🚀 Deployment Pipeline
+
+**End-to-end deployment flow:**
+
+```mermaid
+flowchart TD
+    A[Azure Infrastructure] --> B[Provision Domain Controller VM]
+    B --> C[Promote to AD DS & DNS]
+    C --> D[Configure OUs, Service Accounts, Groups]
+    D --> D2["Promote Second DC (replica) & verify replication"]
+    D2 --> E[Provision SQL Server VMs]
+    E --> F[Join SQL VMs to Domain]
+    F --> G[Move Computer Objects to Servers OU]
+    G --> H[Configure Data Disks/Drives]
+    H --> I[Install WSFC Features]
+    I --> J["Create WSFC Cluster (CNO)"]
+    J --> K[Configure Cluster Quorum/DNS]
+    K --> L[Install SQL Server]
+    L --> M[Configure SQL Service Accounts]
+    M --> N[Create Always On AG]
+    N --> O["Create SQL Listener (VCO)"]
+    O --> P[Validate HA/DR]
+```
+
+---
+
+## ⚡ Parallelizing In-Guest Configuration (AD ∥ Linux, gated Windows)
+
+### Problem
+
+The original `vm-config.sh` script ran Active Directory promotion, Linux (RHEL) configuration, and Windows SQL/WSFC setup **strictly sequentially**, even though only one real dependency exists: Windows domain-joins its nodes and requires Kerberos authentication, so it must wait for Active Directory. Linux depends on neither AD nor Windows. Sequential execution wastes the sandbox's time-bound deployment window, paying the full sum of all three pipelines' wall-clock runtime instead of overlapping the independent ones.
+
+### Decision
+
+Split `vm-config.sh` into three independent scripts — `vm-config-ad.sh`, `vm-config-windows.sh`, `vm-config-linux.sh` — and orchestrate them with **native Bash job control** (`&`, `wait <pid>`, PID tracking) such that:
+- `vm-config-ad.sh` and `vm-config-linux.sh` start concurrently immediately after infrastructure is deployed (Phases 1–3 complete).
+- `vm-config-windows.sh` starts the instant `vm-config-ad.sh` succeeds — it never waits on `vm-config-linux.sh`.
+- If AD fails, Windows never starts.
+- If Linux fails, that never blocks or skips Windows (Windows' gate is AD's exit status only).
+- The orchestrator ([vm-config-orchestrator.sh](../scripts/shell/test-env/vm-config-orchestrator.sh)) tracks every pipeline's PID and exit status and reports a final summary once all have completed.
+
+### Why
+
+- **Cuts wall-clock time**: Overlapping independent paths uses the sandbox's fixed window more efficiently.
+- **Failure isolation**: A Linux/RHEL failure no longer silently skips the Windows/WSFC/AG path (which has no dependency on Linux); a failed AD pipeline correctly prevents Windows from starting (it depends on AD). Each pipeline's failure is reported and doesn't compromise unrelated paths.
+- **Native Bash only**: No external tooling (GNU Parallel, `nohup`, etc.) — simplicity, portability, reliability for lab-scale orchestration.
+
+### Challenges Found and Resolved
+
+**Inventory file race:** All three scripts source `env.conf` (which defines a single `INVENTORY_FILE="$PROJECT_ROOT/inventory.ini"`) and do `cat > "$INVENTORY_FILE" <<EOT` (truncate) immediately before their `ansible-playbook` calls. None of their `ansible-playbook` invocations pass `-i` — they rely on `ansible.cfg`'s default inventory path. Sequential execution is safe because one script's write is always consumed by its own play before the next script touches the file. **Concurrent execution would race**: one script's write could truncate the file out from under another script's in-flight `ansible-playbook` run. Ansible fails silently (plays targeting a missing hosts group log "skipping: no hosts matched" and exit 0), so the race would report success while silently skipping work.
+
+**Fix**: Each pipeline now gets its own inventory file (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`) and each script overrides `INVENTORY_FILE` locally right after sourcing `env.conf`, then passes `-i "$INVENTORY_FILE"` explicitly to every `ansible-playbook` call. This removes the shared mutable state entirely instead of narrowing a race window. New vars in `env.conf`:
+```bash
+AD_INVENTORY_FILE="$PROJECT_ROOT/inventory-ad.ini"
+WINDOWS_INVENTORY_FILE="$PROJECT_ROOT/inventory-windows.ini"
+LINUX_INVENTORY_FILE="$PROJECT_ROOT/inventory-linux.ini"
+```
+
+**Unbound variable in vm-config-linux.sh:** The script references `$LAB_BLOB_SAS_URL`, which is only ever generated inside `vm-config-windows.sh` (a 19-line block that fetches the storage account key and generates a SAS token). Run standalone under `set -u`, Linux crashes with "unbound variable" before SQL Server install.
+
+**Fix**: Linux now generates its own SAS URL locally (copy the same 19-line block from Windows) so it's self-contained and can succeed standalone, independent of Windows.
+
+### Live Monitoring
+
+**Problem**: The first orchestrator version redirected each pipeline's output wholesale to its log file (`> "$LOG" 2>&1 &`). Safe for concurrency, but blind while running: an Ansible `fatal:` inside a pipeline produced no terminal output until that pipeline exited, and the summary showed only an exit code and a log path. An operator watching a 30–60 minute deployment had no live signal that a task had already failed unless they knew to `tail -f` the logs in a second terminal.
+
+**Decision**: Stream every pipeline's output live into the orchestrator terminal, each line tagged `[ad]` / `[linux]` / `[windows]`, while `tee` keeps an untagged copy in the per-pipeline log:
+
+```bash
+run_pipeline() {
+  local script="$1" log="$2" tag="$3"
+  "./$script" 2>&1 | tee "$log" | awk -v tag="$tag" '{ print tag $0; fflush() }'
+}
+```
+
+Additionally, a `FAILED` summary row now prints the pipeline's Ansible `fatal:`/`failed:` lines plus the last 25 log lines, so the failing task is identified without opening the log file.
+
+**Why these mechanics**:
+- **`awk` with `fflush()`, not `sed`**: `sed` block-buffers when its stdout is not a tty (e.g. the orchestrator itself piped through `tee`), which would delay output and defeat live monitoring. `awk`'s `fflush()` forces line-buffered output on both GNU (Linux CI) and BSD (macOS control node).
+- **Tag applied *after* `tee`**: log files stay untagged and pristine for post-mortem grep/diff; only the terminal view carries the prefix.
+- **Exit-status integrity**: `set -o pipefail` is inherited by the background subshell, so `wait <pid>` still returns the pipeline *script's* status (`tee`/`awk` always succeed) — the dependency-graph gating is untouched.
+
+**Alternative considered**: keep the orchestrator quiet and print ready-to-paste `tail -f .logs/vm-config-<ts>/*.log` commands for a second terminal. Rejected: it depends on the operator remembering to open that terminal, and a sandbox deployment is typically watched from a single session. The `tail -f` option remains available anyway since the log files still exist.
+
+**Consequence accepted**: terminal output from concurrent pipelines interleaves (Ansible's multi-line task blocks can mix); the per-line tag keeps every line attributable, and the clean per-pipeline logs preserve uninterleaved streams.
+
+### Alternatives Considered
+
+| Approach                          | Pros                                   | Cons                                                         |
+|-----------------------------------|----------------------------------------|--------------------------------------------------------------|
+| Keep fully sequential             | Simplest, no coordination needed       | Wastes 30–60% of sandbox window; failure propagates         |
+| GNU Parallel / xargs -P           | Well-tested, familiar                  | External dependency, not on macOS by default                 |
+| Shared inventory + orchestrator   | Still parallel, fewer files             | Still one shared-mutable path; race window just narrower     |
+| Per-pipeline inventory files (✓)  | No shared state; clear ownership       | 3 new .gitignored files                                      |
+
+### Consequences
+
+- **Wall-clock deploy time**: Reduced from `AD + Linux + Windows` to `max(AD, Linux) + Windows` — typically 30–50% faster in the sandbox.
+- **New output structure**: Three per-pipeline log files under `.logs/vm-config-<timestamp>/` (gitignored), plus a live tagged stream of all pipelines in the orchestrator terminal. A failure in any pipeline is visible the moment it happens and again in the summary (with the fatal-task excerpt).
+- **No rollback on Ctrl-C**: The orchestrator's `trap` signals its three direct children but doesn't roll back an in-flight AD promotion or WSFC formation — an interrupted run needs manual operator verification of domain controller and cluster health before re-running.
+- **Inventory files are gitignored**: Each pipeline writes its own plaintext inventory with credentials (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`). Not tracked in git (unlike the existing `inventory.ini`, which is pre-git tracked as a separate security concern).
+
+### Operational Impact
+
+- **Deployment**: `db-deploy.sh` now calls `./vm-config-orchestrator.sh` instead of `./vm-config.sh`. The orchestrator is idempotent — re-running a failed deployment calls the same three scripts with the same inputs; each script is already idempotent (Ansible plays, `az` CLI idempotence), so re-running is safe.
+- **Observability**: All pipeline output streams live in the orchestrator terminal, line-tagged `[ad]` / `[linux]` / `[windows]`. Untagged per-pipeline copies land under `.logs/vm-config-<timestamp>/` (`vm-config-ad.log`, `vm-config-linux.log`, `vm-config-windows.log`). A failure prints the exit code, log path, the Ansible `fatal:` lines, and the last 25 log lines in the summary; `tail -f` on the log files remains available for a single-pipeline view.
+- **On interrupt**: A Ctrl-C or SIGTERM sends signals to any in-flight pipelines but does not clean up Azure resources or roll back domain/cluster state — the user must verify DC and cluster health manually before re-running.
+- **Ansible configuration**: `ansible.cfg` still sets `inventory = ~/projects/.../inventory.ini` as the default, but it's no longer used by the three pipelines (each passes `-i` explicitly). The old `inventory.ini` is untouched and can still be used by future scripts or manual runs.
+
+---
+
+## 📘 Engineering Decisions and Lessons Learned
+
+### DNS Client Restart vs DNS Cache Flush
+**Problem:** After joining the domain and updating DNS, name resolution on SQL nodes was unreliable until reboot.
+**Alternatives Considered:**  
+- Restart DNS Client service  
+- Flush DNS cache (`ipconfig /flushdns`)  
+- Full reboot
+**Decision:** Restarting the DNS Client service is usually sufficient and less disruptive than a full reboot.
+**Why:** Ensures the node picks up new DNS settings and registrations immediately.
+
+### Discovering AD DS Managed Disk
+**Problem:** Identifying the correct disk to initialize and format for AD DS database and logs.
+**Alternatives Considered:**  
+- By disk number  
+- By Azure LUN  
+- By provisioned size (chosen)
+**Decision:** Select disk by matching the provisioned size.
+**Why:** Disk numbers and LUNs can vary depending on VM size and Azure deployment timing, but the size is unique and stable.
+
+### Separating AD DS Promotion from AD Administration
+**Problem:** Combining domain controller promotion with AD object administration risked idempotency and error recovery.
+**Alternatives Considered:**  
+- Single playbook for both roles  
+- Separate playbooks (chosen)
+**Decision:** Separate domain controller promotion (infrastructure) from management of OUs, accounts, and GPOs (administration).
+**Why:** Reduces risk, improves reusability, and allows safe re-runs of administrative tasks.
+
+### Moving Computer Objects Only After Domain Join
+**Problem:** Computer objects do not exist until domain join completes, so cannot be moved or managed in OUs.
+**Alternatives Considered:**  
+- Pre-create computer objects  
+- Move after join (chosen)
+**Decision:** Move computer objects into target OUs only after successful domain join.
+**Why:** Ensures correct object creation, avoids errors, and guarantees GPOs apply as intended.
+
+---
+
+## ✅ Operational Validation
+
+The following table documents key validation commands and what each proves:
+
+| Area           | Command / Check                                      | What it Proves                                                   |
+|----------------|------------------------------------------------------|------------------------------------------------------------------|
+| Active Directory | `Get-ADDomain`, `Get-ADUser`, `Get-ADComputer`     | Domain controller is functional, objects exist                    |
+| AD Replication  | `repadmin /replsummary`, `Get-ADReplicationPartnerMetadata` | Both domain controllers replicate inbound and outbound with zero failures |
+| DNS             | `nslookup <domain>`, `Resolve-DnsName <listener>`   | AD-integrated DNS is resolving cluster and listener names         |
+| Domain Join     | `whoami`, `echo %USERDOMAIN%`, `nltest /dsgetdc:...` | Node is joined to domain, domain controller reachable             |
+| Storage         | `Get-Volume`, `fsutil fsinfo volumeinfo F:`         | Data/log/backup drives are present, formatted, correct settings   |
+| WSFC            | `Get-Cluster`, `Get-ClusterNode`, `Test-Cluster`    | Cluster is formed, nodes are up, CNO exists                      |
+| SQL Server      | `sqlcmd -S <listener> -E -Q "SELECT @@SERVERNAME"`  | SQL is running, listener is reachable, Windows auth works         |
+| Always On AG    | `Get-ClusterGroup`, `Get-SqlAvailabilityGroup`      | AG is created, synchronized, listener is online                   |
+
+Each validation demonstrates the intended outcome for its layer:
+- AD: Directory services are operational
+- AD Replication: Directory changes converge across both domain controllers
+- DNS: Cluster and SQL names resolve as expected
+- Domain Join: Nodes are correctly authenticated and managed
+- Storage: SQL disks are ready for use and follow best practices
+- WSFC: Cluster is healthy and CNO/VCOs are present
+- SQL: SQL Server is running and accessible through the cluster listener
+- AG: Always On high availability is functional
+
+### 🔁 Domain Controller Replication Verification
+
+The two-domain-controller topology is stood up by two playbooks: [configure-domain-controller.yml](../ansible/playbooks/configure-domain-controller.yml) promotes `dc-res-ind-112` as the **forest root** of `sqlfci.local`, and [configure-dc2.yml](../ansible/playbooks/configure-dc2.yml) joins and promotes `dc2-res-ind-112` as an **additional domain controller (replica)** in the same forest. The captures below are the live evidence that both DCs are running, share one forest, and actively replicate directory data. Red annotations highlight the values a reviewer should check to confirm the result is genuine.
+
+**1 — Both domain-controller VMs are running (Azure portal).** `dc-res-ind-112` and `dc2-res-ind-112` are both in the `Running` state in Central India.
+
+<img src="./images/dc-vms-running.png" alt="Azure portal showing dc-res-ind-112 and dc2-res-ind-112 both Running in Central India" width="820" />
+
+**2 — Both DCs are registered in one forest, and both are Global Catalogs.** `Get-ADDomainController` lists both hosts with their static private IPs (`10.10.4.4`, `10.10.4.5`); `Get-ADforest` shows a single domain `sqlfci.local` with both servers as Global Catalogs; `Get-ADReplicationPartnerMetadata` shows a recent `LastReplicationSuccess`.
+
+<img src="./images/dc-forest-and-replication.png" alt="Get-ADDomainController, Get-ADforest and replication partner metadata listing both DCs in one forest" width="820" />
+
+**3 — Replication is healthy in both directions.** `repadmin /replsummary` reports `0` failures for every source and destination DSA — no replication errors between `dc-res-ind-112` and `dc2-res-ind-112`, inbound or outbound.
+
+<img src="./images/dc-replication-summary.png" alt="repadmin /replsummary showing zero replication failures between both DCs" width="820" />
+
+**4 — A test object is created on DC1.** A `Test Replication` user (`test.replication@sqlfci.local`) is created on `dc-res-ind-112` (RDP host `20.219.53.47`) and appears in the `sqlfci.local/Users` container in Active Directory Users and Computers.
+
+<img src="./images/dc-test-user-created.png" alt="New-ADUser creating the Test Replication account on DC1, visible in ADUC" width="820" />
+
+**5 — The same object is visible on DC2.** Running `Get-ADUser test.replication` on `dc2-res-ind-112` (RDP host `20.219.145.108`) returns the identical object — same distinguished name and UPN — proving the create on DC1 replicated to DC2. The `hostname` output confirms the query ran on the second DC.
+
+<img src="./images/dc-test-user-replicated.png" alt="Get-ADUser on dc2-res-ind-112 returning the replicated Test Replication user" width="820" />
+
+Together these confirm the intended outcome of this layer: a redundant, actively replicating two-DC forest that WSFC and SQL Server Always On can depend on for Kerberos authentication and AD-integrated DNS.
+
+---
+
