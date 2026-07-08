@@ -291,6 +291,93 @@ The two-domain-controller topology is stood up by two playbooks: [configure-doma
 
 Together these confirm the intended outcome of this layer: a redundant, actively replicating two-DC forest that WSFC and SQL Server Always On can depend on for Kerberos authentication and AD-integrated DNS.
 
+---
+
+## ⚡ Parallelizing In-Guest Configuration (AD ∥ Linux, gated Windows)
+
+### Problem
+
+The original `vm-config.sh` script ran Active Directory promotion, Linux (RHEL) configuration, and Windows SQL/WSFC setup **strictly sequentially**, even though only one real dependency exists: Windows domain-joins its nodes and requires Kerberos authentication, so it must wait for Active Directory. Linux depends on neither AD nor Windows. Sequential execution wastes the sandbox's time-bound deployment window, paying the full sum of all three pipelines' wall-clock runtime instead of overlapping the independent ones.
+
+### Decision
+
+Split `vm-config.sh` into three independent scripts — `vm-config-ad.sh`, `vm-config-windows.sh`, `vm-config-linux.sh` — and orchestrate them with **native Bash job control** (`&`, `wait <pid>`, PID tracking) such that:
+- `vm-config-ad.sh` and `vm-config-linux.sh` start concurrently immediately after infrastructure is deployed (Phases 1–3 complete).
+- `vm-config-windows.sh` starts the instant `vm-config-ad.sh` succeeds — it never waits on `vm-config-linux.sh`.
+- If AD fails, Windows never starts.
+- If Linux fails, that never blocks or skips Windows (Windows' gate is AD's exit status only).
+- The orchestrator ([vm-config-orchestrator.sh](../scripts/shell/test-env/vm-config-orchestrator.sh)) tracks every pipeline's PID and exit status and reports a final summary once all have completed.
+
+### Why
+
+- **Cuts wall-clock time**: Overlapping independent paths uses the sandbox's fixed window more efficiently.
+- **Failure isolation**: A Linux/RHEL failure no longer silently skips the Windows/WSFC/AG path (which has no dependency on Linux); a failed AD pipeline correctly prevents Windows from starting (it depends on AD). Each pipeline's failure is reported and doesn't compromise unrelated paths.
+- **Native Bash only**: No external tooling (GNU Parallel, `nohup`, etc.) — simplicity, portability, reliability for lab-scale orchestration.
+
+### Challenges Found and Resolved
+
+**Inventory file race:** All three scripts source `env.conf` (which defines a single `INVENTORY_FILE="$PROJECT_ROOT/inventory.ini"`) and do `cat > "$INVENTORY_FILE" <<EOT` (truncate) immediately before their `ansible-playbook` calls. None of their `ansible-playbook` invocations pass `-i` — they rely on `ansible.cfg`'s default inventory path. Sequential execution is safe because one script's write is always consumed by its own play before the next script touches the file. **Concurrent execution would race**: one script's write could truncate the file out from under another script's in-flight `ansible-playbook` run. Ansible fails silently (plays targeting a missing hosts group log "skipping: no hosts matched" and exit 0), so the race would report success while silently skipping work.
+
+**Fix**: Each pipeline now gets its own inventory file (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`) and each script overrides `INVENTORY_FILE` locally right after sourcing `env.conf`, then passes `-i "$INVENTORY_FILE"` explicitly to every `ansible-playbook` call. This removes the shared mutable state entirely instead of narrowing a race window. New vars in `env.conf`:
+```bash
+AD_INVENTORY_FILE="$PROJECT_ROOT/inventory-ad.ini"
+WINDOWS_INVENTORY_FILE="$PROJECT_ROOT/inventory-windows.ini"
+LINUX_INVENTORY_FILE="$PROJECT_ROOT/inventory-linux.ini"
+```
+
+**Unbound variable in vm-config-linux.sh:** The script references `$LAB_BLOB_SAS_URL`, which is only ever generated inside `vm-config-windows.sh` (a 19-line block that fetches the storage account key and generates a SAS token). Run standalone under `set -u`, Linux crashes with "unbound variable" before SQL Server install.
+
+**Fix**: Linux now generates its own SAS URL locally (copy the same 19-line block from Windows) so it's self-contained and can succeed standalone, independent of Windows.
+
+### Live Monitoring
+
+**Problem**: The first orchestrator version redirected each pipeline's output wholesale to its log file (`> "$LOG" 2>&1 &`). Safe for concurrency, but blind while running: an Ansible `fatal:` inside a pipeline produced no terminal output until that pipeline exited, and the summary showed only an exit code and a log path. An operator watching a 30–60 minute deployment had no live signal that a task had already failed unless they knew to `tail -f` the logs in a second terminal.
+
+**Decision**: Stream every pipeline's output live into the orchestrator terminal, each line tagged `[ad]` / `[linux]` / `[windows]`, while `tee` keeps an untagged copy in the per-pipeline log:
+
+```bash
+run_pipeline() {
+  local script="$1" log="$2" tag="$3"
+  "./$script" 2>&1 | tee "$log" | awk -v tag="$tag" '{ print tag $0; fflush() }'
+}
+```
+
+Additionally, a `FAILED` summary row now prints the pipeline's Ansible `fatal:`/`failed:` lines plus the last 25 log lines, so the failing task is identified without opening the log file.
+
+**Why these mechanics**:
+- **`awk` with `fflush()`, not `sed`**: `sed` block-buffers when its stdout is not a tty (e.g. the orchestrator itself piped through `tee`), which would delay output and defeat live monitoring. `awk`'s `fflush()` forces line-buffered output on both GNU (Linux CI) and BSD (macOS control node).
+- **Tag applied *after* `tee`**: log files stay untagged and pristine for post-mortem grep/diff; only the terminal view carries the prefix.
+- **Exit-status integrity**: `set -o pipefail` is inherited by the background subshell, so `wait <pid>` still returns the pipeline *script's* status (`tee`/`awk` always succeed) — the dependency-graph gating is untouched.
+
+**Alternative considered**: keep the orchestrator quiet and print ready-to-paste `tail -f .logs/vm-config-<ts>/*.log` commands for a second terminal. Rejected: it depends on the operator remembering to open that terminal, and a sandbox deployment is typically watched from a single session. The `tail -f` option remains available anyway since the log files still exist.
+
+**Consequence accepted**: terminal output from concurrent pipelines interleaves (Ansible's multi-line task blocks can mix); the per-line tag keeps every line attributable, and the clean per-pipeline logs preserve uninterleaved streams.
+
+### Alternatives Considered
+
+| Approach                          | Pros                                   | Cons                                                         |
+|-----------------------------------|----------------------------------------|--------------------------------------------------------------|
+| Keep fully sequential             | Simplest, no coordination needed       | Wastes 30–60% of sandbox window; failure propagates         |
+| GNU Parallel / xargs -P           | Well-tested, familiar                  | External dependency, not on macOS by default                 |
+| Shared inventory + orchestrator   | Still parallel, fewer files             | Still one shared-mutable path; race window just narrower     |
+| Per-pipeline inventory files (✓)  | No shared state; clear ownership       | 3 new .gitignored files                                      |
+
+### Consequences
+
+- **Wall-clock deploy time**: Reduced from `AD + Linux + Windows` to `max(AD, Linux) + Windows` — typically 30–50% faster in the sandbox.
+- **New output structure**: Three per-pipeline log files under `.logs/vm-config-<timestamp>/` (gitignored), plus a live tagged stream of all pipelines in the orchestrator terminal. A failure in any pipeline is visible the moment it happens and again in the summary (with the fatal-task excerpt).
+- **No rollback on Ctrl-C**: The orchestrator's `trap` signals its three direct children but doesn't roll back an in-flight AD promotion or WSFC formation — an interrupted run needs manual operator verification of domain controller and cluster health before re-running.
+- **Inventory files are gitignored**: Each pipeline writes its own plaintext inventory with credentials (`inventory-ad.ini`, `inventory-windows.ini`, `inventory-linux.ini`). Not tracked in git (unlike the existing `inventory.ini`, which is pre-git tracked as a separate security concern).
+
+### Operational Impact
+
+- **Deployment**: `db-deploy.sh` now calls `./vm-config-orchestrator.sh` instead of `./vm-config.sh`. The orchestrator is idempotent — re-running a failed deployment calls the same three scripts with the same inputs; each script is already idempotent (Ansible plays, `az` CLI idempotence), so re-running is safe.
+- **Observability**: All pipeline output streams live in the orchestrator terminal, line-tagged `[ad]` / `[linux]` / `[windows]`. Untagged per-pipeline copies land under `.logs/vm-config-<timestamp>/` (`vm-config-ad.log`, `vm-config-linux.log`, `vm-config-windows.log`). A failure prints the exit code, log path, the Ansible `fatal:` lines, and the last 25 log lines in the summary; `tail -f` on the log files remains available for a single-pipeline view.
+- **On interrupt**: A Ctrl-C or SIGTERM sends signals to any in-flight pipelines but does not clean up Azure resources or roll back domain/cluster state — the user must verify DC and cluster health manually before re-running.
+- **Ansible configuration**: `ansible.cfg` still sets `inventory = ~/projects/.../inventory.ini` as the default, but it's no longer used by the three pipelines (each passes `-i` explicitly). The old `inventory.ini` is untouched and can still be used by future scripts or manual runs.
+
+---
+
 ## 🔴 Problem Overview
 
 Running SQL Server yourself on VMs reintroduces every responsibility the PaaS service used
