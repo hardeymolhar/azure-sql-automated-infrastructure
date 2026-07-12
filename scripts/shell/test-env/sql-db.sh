@@ -6,7 +6,7 @@ source "$(dirname "$0")/env.conf"
 
 VM_IP=$(az vm list-ip-addresses \
   --resource-group "$RESOURCE_GROUP" \
-  --name "vm-res-ind-112" \
+  --name "vm-res-ind-190" \
   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
   -o tsv)
 

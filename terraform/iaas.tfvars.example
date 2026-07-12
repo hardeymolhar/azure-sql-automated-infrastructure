@@ -1,0 +1,28 @@
+# =====================================================
+# IaaS SQL-on-VM track — enablement example
+# -----------------------------------------------------
+# Copy these values into terraform.tfvars (or pass with -var-file) to deploy
+# the IaaS track alongside the existing PaaS configuration in the SAME state
+# (azuresql.tfstate). With iaas_enabled = false (the default), terraform plan
+# shows zero changes.
+#
+# NOT reproduced by Terraform (do after apply, if needed):
+#   - Phase 4 in-guest configuration: ./scripts/shell/test-env/vm-config-orchestrator.sh
+#   - dp-300 lab-archive blob upload (source file is gitignored; storage.sh:161)
+#   - xevents stored access policy (no azurerm support; storage.sh:308)
+# =====================================================
+
+iaas_enabled = true
+
+# The sandbox resource group the IaaS track deploys into (the shell resolves
+# this at runtime via `az group list --query "[1].name"`).
+iaas_rg = "rg_sb_centralindia_XXXXXXXX"
+
+# env.conf ADMIN_PASSWORD — VM admin + DSRM + sql-admin-password secret.
+iaas_admin_password = "CHANGE_ME"
+
+# Defaults below mirror env.conf; override only if the sandbox differs.
+# iaas_resource_suffix      = "res-ind-442"
+# iaas_location             = "centralindia"
+# iaas_admin_username       = "sqladmin"
+# iaas_storage_account_name = "storage69987"  # globally unique — change if taken

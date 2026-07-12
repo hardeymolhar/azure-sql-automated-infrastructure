@@ -18,15 +18,15 @@ source "$(dirname "$0")/env.conf"
 # PHASE 0 - Baseline configuration
 # ---------------------------------------------------------
 # Seeds the variable/config files the later steps read.
-echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
-./var-config.sh
+# echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
+# ./var-config.sh
 
-# # ---------------------------------------------------------
-# # PHASE 1 - Core infrastructure (foundation for everything)
-# # ---------------------------------------------------------
-# # Networking comes FIRST: storage and key vault below attach network rules that
-# # reference the subnet (and the subnet's service endpoints), so the VNet/subnet
-# # must already exist. VMs also need the NICs that network.sh creates.
+# # # ---------------------------------------------------------
+# # # PHASE 1 - Core infrastructure (foundation for everything)
+# # # ---------------------------------------------------------
+# # # Networking comes FIRST: storage and key vault below attach network rules that
+# # # reference the subnet (and the subnet's service endpoints), so the VNet/subnet
+# # # must already exist. VMs also need the NICs that network.sh creates.
 
 # echo -e "${BLUE}STEP 1 - Virtual Network, subnets, NSGs, NICs, public IPs${NC}"
 # ./network.sh
@@ -46,35 +46,20 @@ echo -e "${BLUE}Baseline: pre-deployment variable configuration...${NC}"
 
 # requires: network.sh (needs the VNet + VM NSGs it adds rules to). Bastion only
 # depends on networking, so it can run any time after STEP 1.
-echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
-./bastion.sh
+# echo -e "${BLUE}STEP 4 - Azure Bastion (private RDP/SSH to the VMs)${NC}"
+# ./bastion.sh
 
 # requires: network.sh (the dedicated DC subnet/NSG + static-IP DC NIC) and, for
 # the WSFC Cloud Witness later, storage.sh. Creates the Windows Server 2022 VM
 # that becomes the Active Directory Domain Controller (AD DS + DNS) and enables
 # WinRM. Active Directory is a first-class dependency, so the DC VM is created
-# early here; vm-res-ind-112.sh (Phase 4) promotes it BEFORE the SQL nodes domain-join.
+# early here; vm-res-ind-190.sh (Phase 4) promotes it BEFORE the SQL nodes domain-join.
 # echo -e "${BLUE}STEP 4b - Domain Controller VM (AD DS + DNS host)${NC}"
 # ./dc-vm.sh
-# ./dc-pipeline.sh
+
 
 # ---------------------------------------------------------
-# PHASE 2 - Linux application VM
-# ---------------------------------------------------------
-# The Linux pattern is "disks first, then VM": encrypted-mgd-disks.sh CREATES
-# the disk-encryption-set + managed disks, and app-vm.sh CREATES the VM and
-# ATTACHES those disks.
-
-# requires: key-vault.sh (the DES wraps a Key Vault key).
-echo -e "${BLUE}STEP 5 - Disk Encryption Set + encrypted disks (Linux)${NC}"
-./encrypted-mgd-disks.sh
-
-# requires: network.sh (NIC) + STEP 5 (the disks it attaches).
-echo -e "${BLUE}STEP 6 - Linux Application VM (creates VM, attaches disks)${NC}"
-./app-vm.sh
-
-# ---------------------------------------------------------
-# PHASE 3 - Windows SQL Server nodes (Always On AG, 2 zones)
+# PHASE 2 - Windows SQL Server nodes (Always On AG, 2 zones)
 # ---------------------------------------------------------
 # The Windows pattern is the reverse of Linux: "VM first, then disks", because
 # win-encrypted-disks*.sh ATTACHES the disks to an existing VM. Node 1 is in
@@ -96,27 +81,43 @@ echo -e "${BLUE}STEP 9 - Windows SQL VM - Node 2 (Zone 2)${NC}"
 echo -e "${BLUE}STEP 10 - Encrypted disks for SQL Node 2${NC}"
 ./win-encrypted-disks-2.sh
 
-# requires: BOTH nodes (STEP 7 + STEP 9) -- it adds both NICs to its backend
-# pool to publish the Always On AG listener's floating IP.
-echo -e "${BLUE}STEP 11 - Internal Load Balancer (AG listener)${NC}"
-./load-balancer.sh
+# # requires: BOTH nodes (STEP 7 + STEP 9) -- it adds both NICs to its backend
+# # pool to publish the Always On AG listener's floating IP.
+# echo -e "${BLUE}STEP 11 - Internal Load Balancer (AG listener)${NC}"
+# ./load-balancer.sh
 
-# requires: all SQL VMs exist (their NICs + public IPs). Groups every SQL VM into
-# one ASG, then opens inbound 1433 from the client IP + each VM's public IP (ASG
-# as the rule destination) so the Linux and Windows nodes can reach each other's
-# SQL engine over the public internet (SSMS-style). Sources stay scoped (never
-# 0.0.0.0/0), matching the SSH/RDP/WinRM client-IP rules.
-echo -e "${BLUE}STEP 11b - SQL engine peer access (ASG + inbound 1433 allowlist)${NC}"
-./application-security-group.sh
+# # requires: all SQL VMs exist (their NICs + public IPs). Groups every SQL VM into
+# # one ASG, then opens inbound 1433 from the client IP + each VM's public IP (ASG
+# # as the rule destination) so the Linux and Windows nodes can reach each other's
+# # SQL engine over the public internet (SSMS-style). Sources stay scoped (never
+# # 0.0.0.0/0), matching the SSH/RDP/WinRM client-IP rules.
+# echo -e "${BLUE}STEP 11b - SQL engine peer access (ASG + inbound 1433 allowlist)${NC}"
+# ./application-security-group.sh
+
+# # requires: both Windows VMs up (NIC resolution). Creates asg-sqlcluster, attaches
+# # both Windows node NICs, and adds 5 inbound rules on each Windows NSG (priorities
+# # 100–140) for the cluster ports: 1433 SQL, 5022 HADR endpoint, 3343 heartbeat,
+# # 135 RPC endpoint mapper, 49152-65535 dynamic RPC. ASG-to-ASG rules are valid for
+# # intra-VNet traffic and correctly handle the no-AD workgroup cluster scenario.
+# echo -e "${BLUE}STEP 11c - WSFC cluster NSG rules (asg-sqlcluster, ports 1433/5022/3343/135/dyn-RPC)${NC}"
+# ./cluster-nsg-rules.sh
+
+# ---------------------------------------------------------
+# PHASE 3 - Linux application VM
+# ---------------------------------------------------------
+# The Linux pattern is "disks first, then VM": encrypted-mgd-disks.sh CREATES
+# the disk-encryption-set + managed disks, and app-vm.sh CREATES the VM and
+# ATTACHES those disks.
+
+# requires: key-vault.sh (the DES wraps a Key Vault key).
+echo -e "${BLUE}STEP 5 - Disk Encryption Set + encrypted disks (Linux)${NC}"
+./encrypted-mgd-disks.sh
+
+# requires: network.sh (NIC) + STEP 5 (the disks it attaches).
+echo -e "${BLUE}STEP 6 - Linux Application VM (creates VM, attaches disks)${NC}"
+./app-vm.sh
 ./sql-engine-access.sh
 
-# requires: both Windows VMs up (NIC resolution). Creates asg-sqlcluster, attaches
-# both Windows node NICs, and adds 5 inbound rules on each Windows NSG (priorities
-# 100–140) for the cluster ports: 1433 SQL, 5022 HADR endpoint, 3343 heartbeat,
-# 135 RPC endpoint mapper, 49152-65535 dynamic RPC. ASG-to-ASG rules are valid for
-# intra-VNet traffic and correctly handle the no-AD workgroup cluster scenario.
-echo -e "${BLUE}STEP 11c - WSFC cluster NSG rules (asg-sqlcluster, ports 1433/5022/3343/135/dyn-RPC)${NC}"
-./cluster-nsg-rules.sh
 
 # ---------------------------------------------------------
 # PHASE 4 - In-guest configuration (Ansible)
@@ -125,8 +126,10 @@ echo -e "${BLUE}STEP 11c - WSFC cluster NSG rules (asg-sqlcluster, ports 1433/50
 # win-sql-vm*.sh scripts). Configures the data drives, installs packages, and
 # sets up SQL Server inside the guests.
 echo -e "${BLUE}STEP 12 - Configure VMs with Ansible (drives, packages, SQL)${NC}"
-./vm-config.sh
-
+# ./vm-config-orchestrator.sh
+./vm-config-ad.sh
+./vm-config-linux.sh
+./vm-config-windows.sh
 # ---------------------------------------------------------
 # PHASE 5 - Azure SQL Database (PaaS track)
 # ---------------------------------------------------------
@@ -193,7 +196,7 @@ echo -e "${BLUE}STEP 12 - Configure VMs with Ansible (drives, packages, SQL)${NC
 
 # LIN_VM_IP=$(az vm list-ip-addresses \
 #   --resource-group "$(az group list --query '[1].name' -o tsv)" \
-#   --name "vm-res-ind-112" \
+#   --name "vm-res-ind-190" \
 #   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
 #   -o tsv)
 

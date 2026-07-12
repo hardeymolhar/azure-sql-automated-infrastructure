@@ -32,6 +32,15 @@ resource "azurerm_mssql_server" "sql" {
 
   connection_policy = "Proxy"
 
+  # TDE (CMK) is managed out-of-band by the security module via
+  # azurerm_mssql_server_transparent_data_encryption. Since azurerm 4.x exposes
+  # transparent_data_encryption_key_vault_key_id on the server itself, the provider
+  # otherwise tries to parse this (empty) server-level attribute and fails with
+  # "expected 2 or 3 path segments". Ignoring it is the provider-documented pattern.
+  lifecycle {
+    ignore_changes = [transparent_data_encryption_key_vault_key_id]
+  }
+
 }
 
 
@@ -60,6 +69,15 @@ resource "azurerm_mssql_server" "sql_secondary" {
   }
 
   connection_policy = "Proxy"
+
+  # TDE (CMK) is managed out-of-band by the security module via
+  # azurerm_mssql_server_transparent_data_encryption. Since azurerm 4.x exposes
+  # transparent_data_encryption_key_vault_key_id on the server itself, the provider
+  # otherwise tries to parse this (empty) server-level attribute and fails with
+  # "expected 2 or 3 path segments". Ignoring it is the provider-documented pattern.
+  lifecycle {
+    ignore_changes = [transparent_data_encryption_key_vault_key_id]
+  }
 }
 
 
@@ -170,16 +188,11 @@ resource "azurerm_mssql_database_extended_auditing_policy" "sql_db_audit" {
   retention_in_days      = 30
 }
 
-resource "azurerm_mssql_database_extended_auditing_policy" "sql_db_secondary_audit" {
-  for_each = {
-    for idx, db in azurerm_mssql_database.db_secondary :
-    idx => db.id
-  }
-
-  database_id            = each.value
-  log_monitoring_enabled = true
-  retention_in_days      = 30
-}
+# NOTE: Database-level blob auditing is NOT supported on geo-replicated secondary
+# databases (Azure returns BlobAuditingIsNotSupportedOnGeoDr — "Blob auditing can be
+# configured on primary databases only"). Secondary-DB audit events are instead covered
+# by server-level auditing on the secondary server (sql_secondary_audit above). Hence the
+# extended auditing policy is applied to PRIMARY databases only (sql_db_audit).
 
 resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_audit_logs" {
   for_each = {
@@ -200,7 +213,7 @@ resource "azurerm_monitor_diagnostic_setting" "sql_db_secondary_audit_logs" {
     enabled  = true
   }
 
-  depends_on = [azurerm_mssql_database_extended_auditing_policy.sql_db_secondary_audit]
+  depends_on = [azurerm_mssql_server_extended_auditing_policy.sql_secondary_audit]
 }
 
 

@@ -35,6 +35,15 @@
   tasks:
 
     # =========================================================
+    # RESUME 2026-07-07: the seven tasks below (DNF cache through sqlcmd PATH)
+    # completed successfully in run vm-config-20260707-182519 before the pip
+    # task failed on a transient PyPI read timeout. Commented out to resume
+    # from the pip task. Re-enable for a fresh sandbox. Note: "Check if
+    # Microsoft SQL repo exists" and "Add Microsoft SQL repository" must be
+    # re-enabled together (the second's `when:` reads the first's register).
+    # =========================================================
+
+    # =========================================================
     # SYSTEM PACKAGES
     # =========================================================
 
@@ -96,11 +105,20 @@
     # PYTHON PACKAGES
     # =========================================================
 
+    # Hardened after run vm-config-20260707-182519: pip's default 15s socket
+    # read timeout tripped on a transient PyPI CDN stall mid-download.
+    # --timeout raises the per-read timeout, --retries retries downloads
+    # within one pip run, and retries/until re-runs the whole task.
     - name: Install required Python packages
       ansible.builtin.pip:
         name: "{{ pip_packages }}"
         executable: pip3
         state: present
+        extra_args: "--timeout 60 --retries 5"
+      register: pip_install
+      retries: 3
+      delay: 10
+      until: pip_install is succeeded
 
     # =========================================================
     # INSTALL .NET 8 SDK USING OFFICIAL INSTALL SCRIPT
@@ -134,19 +152,19 @@
     # # CONFIGURE .NET ENVIRONMENT
     # # =========================================================
 
-    # - name: Configure DOTNET_ROOT
-    #   ansible.builtin.lineinfile:
-    #     path: /home/sqladmin/.bashrc
-    #     line: 'export DOTNET_ROOT="$HOME/.dotnet"'
-    #     state: present
-    #     create: true
+    - name: Configure DOTNET_ROOT
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export DOTNET_ROOT="$HOME/.dotnet"'
+        state: present
+        create: true
 
-    # - name: Configure .NET PATH
-    #   ansible.builtin.lineinfile:
-    #     path: /home/sqladmin/.bashrc
-    #     line: 'export PATH="$PATH:$HOME/.dotnet"'
-    #     state: present
-    #     create: true
+    - name: Configure .NET PATH
+      ansible.builtin.lineinfile:
+        path: /home/sqladmin/.bashrc
+        line: 'export PATH="$PATH:$HOME/.dotnet"'
+        state: present
+        create: true
 
     # =========================================================
     # GLOBAL ENVIRONMENT CONFIGURATION

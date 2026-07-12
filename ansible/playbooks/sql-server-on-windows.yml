@@ -438,11 +438,11 @@
     # Re-classify after the install / uninstall+reinstall. If the engine is STILL
     # not COMPLETE, fail loudly HERE instead of reporting success — the whole
     # point of this change: a partial install must never pass as done on a re-run.
-    # - name: Re-classify the SQL Server engine after install / reinstall
-    #   ansible.windows.win_shell: "{{ sql_engine_probe }}"
-    #   register: sql_engine_state_post
-    #   changed_when: false
-    #   when: sql_engine_install_needed
+    - name: Re-classify the SQL Server engine after install / reinstall
+      ansible.windows.win_shell: "{{ sql_engine_probe }}"
+      register: sql_engine_state_post
+      changed_when: false
+      when: sql_engine_install_needed
 
     - name: Fail if the SQL Server engine is still not completely installed
       ansible.builtin.fail:

@@ -9,7 +9,7 @@ set -euo pipefail
 # Domain Controller (AD DS + DNS). This script only CREATES the VM and enables
 # WinRM; the AD DS role install + forest promotion + DNS forwarders are done
 # in-guest by ansible/playbooks/configure-domain-controller.yml (which runs first
-# in vm-res-ind-112.sh, before any SQL-node domain join).
+# in vm-res-ind-190.sh, before any SQL-node domain join).
 #
 # Networking (dedicated DC subnet/NSG, static private IP DC_PRIVATE_IP) is created
 # by network.sh, so this VM just attaches to the pre-created DC_NIC_NAME. The DC
@@ -260,5 +260,5 @@ echo -e "${GREEN}Public IP:${NC}    $DC_PUBLIC_IP"
 echo -e "${GREEN}Private IP:${NC}   $DC_PRIVATE_IP"
 echo -e "${GREEN}AD domain:${NC}    $AD_DOMAIN_NAME ($AD_NETBIOS_NAME)"
 echo ""
-echo -e "${GREEN}Next:${NC} vm-res-ind-112.sh runs configure-domain-controller.yml to promote this host."
+echo -e "${GREEN}Next:${NC} vm-res-ind-190.sh runs configure-domain-controller.yml to promote this host."
 echo -e "${GREEN}==========================================${NC}"

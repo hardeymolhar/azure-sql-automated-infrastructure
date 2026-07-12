@@ -10,6 +10,12 @@ module "network" {
   network_structure = var.network_structure
 
   client_ip = local.client_ip
+
+  # IaaS SQL-on-VM track (shell parity) — gated, off by default
+  iaas_enabled         = var.iaas_enabled
+  iaas_resource_suffix = var.iaas_resource_suffix
+  iaas_rg              = var.iaas_rg
+  iaas_location        = var.iaas_location
 }
 
 
@@ -38,6 +44,15 @@ module "sql" {
 
   # Wiring: monitoring -> sql
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+
+  # IaaS SQL-on-VM track (shell parity) — witness/backup storage account
+  iaas_enabled              = var.iaas_enabled
+  iaas_rg                   = var.iaas_rg
+  iaas_location             = var.iaas_location
+  iaas_storage_account_name = var.iaas_storage_account_name
+
+  # Wiring: network -> sql (storage firewall vnet rules)
+  iaas_storage_subnet_ids = module.network.iaas_storage_subnet_ids
 }
 
 
@@ -60,6 +75,16 @@ module "security" {
   sql_secondary_server_id             = module.sql.secondary_sql_server_id
   sql_secondary_identity_tenant_id    = module.sql.secondary_sql_identity_tenant_id
   sql_secondary_identity_principal_id = module.sql.secondary_sql_identity_principal_id
+
+  # IaaS SQL-on-VM track (shell parity) — khv vault + disk encryption sets
+  iaas_enabled         = var.iaas_enabled
+  iaas_resource_suffix = var.iaas_resource_suffix
+  iaas_rg              = var.iaas_rg
+  iaas_location        = var.iaas_location
+  iaas_admin_password  = var.iaas_admin_password
+
+  # Wiring: network -> security (Key Vault firewall allows the Linux VM PIP)
+  iaas_linux_vm_public_ip = module.network.iaas_linux_vm_public_ip
 }
 
 
@@ -101,6 +126,26 @@ module "vm" {
   # Wiring: network -> vm
   nic_id    = module.network.linux_nic_id
   db_nic_id = module.network.db_nic_id
+
+  # IaaS SQL-on-VM track (shell parity) — DC + SQL node + Linux workload VMs
+  iaas_enabled         = var.iaas_enabled
+  iaas_resource_suffix = var.iaas_resource_suffix
+  iaas_rg              = var.iaas_rg
+  iaas_location        = var.iaas_location
+  iaas_admin_username  = var.iaas_admin_username
+  iaas_admin_password  = var.iaas_admin_password
+
+  # Wiring: network -> vm (IaaS NICs)
+  iaas_linux_nic_id = module.network.iaas_linux_nic_id
+  iaas_win_nic_id   = module.network.iaas_win_nic_id
+  iaas_win2_nic_id  = module.network.iaas_win2_nic_id
+  iaas_dc_nic_id    = module.network.iaas_dc_nic_id
+  iaas_dc2_nic_id   = module.network.iaas_dc2_nic_id
+
+  # Wiring: security -> vm (CMK disk encryption + Linux MI vault policy)
+  iaas_windows_des_id = module.security.iaas_windows_des_id
+  iaas_linux_des_id   = module.security.iaas_linux_des_id
+  iaas_key_vault_id   = module.security.iaas_key_vault_id
 }
 
 

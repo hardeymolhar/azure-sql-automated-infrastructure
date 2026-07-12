@@ -24,7 +24,7 @@ source "$(dirname "$0")/env.conf"
 # BEFORE the node VMs are created so auto-registration is active when they boot.
 # =========================================================
 
-VNET_LINK_NAME="vnet-res-ind-112$RESOURCE_SUFFIX"
+VNET_LINK_NAME="vnet-res-ind-190$RESOURCE_SUFFIX"
 
 resource_exists() { eval "$1" >/dev/null 2>&1; }
 

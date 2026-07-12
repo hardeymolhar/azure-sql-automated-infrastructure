@@ -149,7 +149,7 @@ fi
 # UPLOAD THE DP-300 LAB ARCHIVE (account key) -> sqlbackups
 # =========================================================
 # Upload with the storage account key (no SAS needed to write). The Windows VMs
-# later DOWNLOAD this blob via a short-lived SAS minted in vm-res-ind-112.sh and
+# later DOWNLOAD this blob via a short-lived SAS minted in vm-res-ind-190.sh and
 # passed to the Ansible playbook. --overwrite keeps re-runs idempotent.
 # (STORAGE_ACCOUNT_KEY was retrieved right after the account was ensured, above.)
 if [ ! -f "$LOCAL_FILE_PATH" ]; then
