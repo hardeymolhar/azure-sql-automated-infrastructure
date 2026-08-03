@@ -6,11 +6,11 @@ source "$(dirname "$0")/env.conf"
 
 echo -e "${YELLOW}Fetching Azure outputs...${NC}"
 
-LIN_VM_IP=$(az vm list-ip-addresses \
-  --resource-group "$(az group list --query '[1].name' -o tsv)" \
-  --name "$VM_NAME" \
-  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
-  -o tsv)
+# LIN_VM_IP=$(az vm list-ip-addresses \
+#   --resource-group "$(az group list --query '[1].name' -o tsv)" \
+#   --name "$VM_NAME" \
+#   --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+#   -o tsv)
 
 WIN_VM_PUBLIC_IP=$(az vm list-ip-addresses \
   --resource-group "$RESOURCE_GROUP" \
@@ -29,12 +29,11 @@ WIN_VM_PUBLIC_IP_2=$(az vm list-ip-addresses \
 echo "Updating Ansible inventory..."
 
 cat > "$INVENTORY_FILE" <<EOT
-[rhel_vm]
-$VM_NAME ansible_host=$LIN_VM_IP
+# [rhel_vm]
 
-[rhel_vm:vars]
-ansible_user=sqladmin
-ansible_ssh_private_key_file=$SSH_PRIVATE_KEY_PATH
+# [rhel_vm:vars]
+# ansible_user=sqladmin
+# ansible_ssh_private_key_file=$SSH_PRIVATE_KEY_PATH
 [windows_vm]
 $WIN_VM_NAME   ansible_host=$WIN_VM_PUBLIC_IP
 $WIN_VM_NAME_2 ansible_host=$WIN_VM_PUBLIC_IP_2
@@ -48,22 +47,23 @@ ansible_winrm_scheme=https
 ansible_winrm_transport=ntlm
 ansible_winrm_server_cert_validation=ignore
 ansible_winrm_connection_timeout=120
+ansible_winrm_read_timeout_sec=300
 EOT
 
 
-echo "Configuring RHEL VM disks and storage (/u02 /u03 /u04 /u05)..."
-ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
-  ansible-playbook "$PROJECT_ROOT/ansible/playbooks/dbdrive-configuration.yml"
+# echo "Configuring RHEL VM disks and storage (/u02 /u03 /u04 /u05)..."
+# ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
+#   ansible-playbook "$PROJECT_ROOT/ansible/playbooks/dbdrive-configuration.yml"
 
 
-echo "Installing RHEL VM packages for Azure SQL connectivity..."
-ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
-  ansible-playbook "$PROJECT_ROOT/ansible/playbooks/vm-pkg.yml"
+# echo "Installing RHEL VM packages for Azure SQL connectivity..."
+# ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
+#   ansible-playbook "$PROJECT_ROOT/ansible/playbooks/vm-pkg.yml"
 
 
-echo "Windows VM Disks and Storage Configuration (both nodes)..."
-ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
-ansible-playbook "$PROJECT_ROOT/ansible/playbooks/windows-dbdrive-configuration.yml"
+# echo "Windows VM Disks and Storage Configuration (both nodes)..."
+# ANSIBLE_CONFIG="$PROJECT_ROOT/ansible.cfg" \
+# ansible-playbook "$PROJECT_ROOT/ansible/playbooks/windows-dbdrive-configuration.yml"
 
 
 echo "Generating a SAS download URL for the DP-300 lab archive..."

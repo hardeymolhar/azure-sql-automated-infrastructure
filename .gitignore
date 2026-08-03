@@ -36,3 +36,18 @@ docs/lab-files/
 
 # Local Codex/MCP tooling config
 .codex/
+
+# Generated Ansible inventory variants (per-VM-type snapshots written by
+# vm-config.sh). inventory.ini itself STAYS TRACKED — it is the one the
+# playbooks read — but it also carries a plaintext ansible_password, so its
+# changes are committed deliberately, never swept in with a broad `git add`.
+inventory-*.ini
+
+# vm-config.sh run logs.
+.logs/
+
+# Vendored SQL sample database (~59MB binary, not source).
+scripts/bacpac/
+
+# macOS Finder metadata.
+.DS_Store

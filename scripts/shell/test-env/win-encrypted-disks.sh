@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # The raw disks are then partitioned/formatted in-guest by the Ansible
 # playbook ansible/playbooks/windows-dbdrive-configuration.yml (run from
-# vm-stg-ind-103.sh).
+# vm-stg-ind-49.sh).
 #
 # Run order: AFTER win-sql-vm.sh (the VM must exist before disks can attach).
 # Idempotent: re-running skips resources that already exist / are attached.
@@ -180,6 +180,6 @@ echo -e "${GREEN}LUN 1 (LOG):${NC}       $WIN_LOG_DISK    -> drive G: (SQLLOG)"
 echo -e "${GREEN}LUN 2 (TEMPDB):${NC}    $WIN_TEMP_DISK   -> drive T: (SQLTEMPDB)"
 echo -e "${GREEN}LUN 3 (BACKUP):${NC}    $WIN_BACKUP_DISK -> drive H: (SQLBACKUP)"
 echo ""
-echo -e "${GREEN}Next:${NC} run vm-stg-ind-103.sh to partition/format the drives in-guest"
+echo -e "${GREEN}Next:${NC} run vm-stg-ind-49.sh to partition/format the drives in-guest"
 echo -e "      (ansible/playbooks/windows-dbdrive-configuration.yml)."
 echo -e "${GREEN}==========================================${NC}"

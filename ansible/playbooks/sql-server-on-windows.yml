@@ -224,9 +224,14 @@
     - name: Install SSMS silently
       ansible.windows.win_package:
         path: "{{ sql_media_dir }}\\SSMS-Setup-ENU.exe"
-        arguments: /Install /Quiet /Norestart
+        arguments: >-
+          --quiet --wait --norestart
+          --add Microsoft.SqlServer.Workload.SSMS.AI
+          --add Microsoft.SqlServer.Workload.SSMS.BI
+          --includeRecommended
         creates_path: "{{ ssms_exe_path }}"
         state: present
+
 
     # =====================================================
     # DOWNLOAD + EXTRACT SQL SERVER MEDIA (inside the VM)
