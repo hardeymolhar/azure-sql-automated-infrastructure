@@ -1,0 +1,135 @@
+# =============================================================================
+# terraform.tfvars.example — copy to terraform.tfvars and fill in
+# -----------------------------------------------------------------------------
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# .gitignore excludes *.tfvars, so the copy you edit is never committed. This
+# template is safe to commit because it carries placeholders only.
+#
+# !! BEFORE YOUR FIRST APPLY !!
+# terraform_flat and scripts/shell/test-env/db-deploy.sh build the SAME estate.
+# Running both against one resource group fails with ResourceAlreadyExists. Point
+# this at a resource group that the shell pipeline has NOT already provisioned.
+#
+# !! DO NOT COPY terraform/terraform.tfvars INTO THIS ROOT !!
+# The two roots take different variable shapes and the values are not portable:
+#
+#   terraform/ (modular, multi-region)   terraform_flat/ (this root, single-region)
+#   ----------------------------------   ---------------------------------------
+#   location = ["centralindia", ...]     location = "centralindia"        (string)
+#   rg       = ["rg_a", "rg_b", ...]     resource_group_name = "rg_a"     (string)
+#   network_structure = { dev-vnet {} }  vnet_address_space / *_subnet_prefix
+#   sqladmin_password = "..."            (not declared — admin_password covers it)
+#
+# The two roots also use different address spaces on purpose (10.1.0.0/16 vs
+# 10.10.0.0/16) so they can coexist in one subscription without overlapping.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# REQUIRED — no defaults exist for these
+# -----------------------------------------------------------------------------
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# The sandbox resource group. env.conf resolved this with
+# `az group list --query "[1].name" -o tsv`; run that to find the current value:
+#   az group list -o table
+resource_group_name = "rg_sb_centralindia_000000_0_000000000000"
+
+# Windows local administrator AND Azure SQL administrator password.
+# Must satisfy Azure's complexity rules: 12-123 chars, 3 of {upper, lower, digit,
+# symbol}. Never commit the real value.
+admin_password = "CHANGE-ME-before-apply"
+
+# -----------------------------------------------------------------------------
+# COMMONLY OVERRIDDEN
+# -----------------------------------------------------------------------------
+
+location        = "centralindia"
+resource_suffix = "stg-ind-49"
+
+# Globally unique across all of Azure. If apply fails with a name conflict, this
+# is the first thing to change.
+storage_account_name = "storage69987"
+
+# Microsoft Entra administrator for the SQL server (db-deploy.sh STEP 14).
+# Terraform cannot resolve this itself — data.azurerm_client_config exposes
+# object_id but not userPrincipalName. Find yours with:
+#   az ad signed-in-user show --query userPrincipalName -o tsv
+# Leave as "" to skip setting an Entra admin.
+entra_admin_login = ""
+
+alert_email = "you@example.com"
+
+# -----------------------------------------------------------------------------
+# NETWORKING — must match network.tf
+# -----------------------------------------------------------------------------
+# These are the defaults from variables.tf, restated here because getting them
+# wrong is the most common way to break this root. Addressing comes from
+# env.conf VNET_ADDRESS_PREFIX and network.sh:29-36.
+#
+#   10.10.1.0/24  main subnet — holds BOTH Windows SQL NICs and the Linux NIC.
+#                 Service endpoints: Microsoft.Storage, KeyVault, Sql.
+#   10.10.2.0/24  win subnet  — created and service-endpointed, but no NIC is
+#                 placed in it; storage.tf still registers a VNet rule for it.
+#   10.10.3.0/26  AzureBastionSubnet — range reserved only, no bastion host.
+
+vnet_address_space    = ["10.10.0.0/16"]
+main_subnet_prefix    = ["10.10.1.0/24"]
+win_subnet_prefix     = ["10.10.2.0/24"]
+bastion_subnet_prefix = ["10.10.3.0/26"]
+create_bastion_subnet = false
+
+# WSFC / Always On name resolution without Active Directory. BOTH addresses must
+# fall inside main_subnet_prefix and outside any dynamically-assigned range.
+private_dns_zone = "corp.internal"
+ag_listener_ip   = "10.10.1.200"
+wsfc_cluster_ip  = "10.10.1.201"
+
+# -----------------------------------------------------------------------------
+# FEATURE GATES
+# -----------------------------------------------------------------------------
+
+# The Linux (RHEL) application VM, its Disk Encryption Set and its four disks.
+# Off by default: db-deploy.sh has STEPs 5 and 6 commented out.
+enable_linux_vm = false
+
+# The PaaS Azure SQL estate — db-deploy.sh PHASE 5, STEPs 13-19.
+enable_phase5_sql = true
+
+# The two `az` CLI shims for behaviour azurerm 4.75.0 cannot express: the XEvent
+# stored access policy and SQL automatic tuning. Needs `az` on PATH and an active
+# `az login`. Set false for plan-only or CI runs.
+enable_cli_shims = true
+
+# -----------------------------------------------------------------------------
+# SANDBOX-FRIENDLY OVERRIDES — uncomment as needed
+# -----------------------------------------------------------------------------
+
+# Purge protection is IRREVERSIBLE. With it on (the default, matching
+# key-vault.sh), `terraform destroy` leaves a soft-deleted vault holding the name
+# for 7 days, so a rebuild under the same name fails. Turn it OFF for a sandbox
+# you expect to tear down and recreate.
+# kv_purge_protection = false
+
+# The default disk set is ~15.2 TB per node (4022 + 2011 + 1024 + 8124 GB), and
+# node 1 is a Standard_D8s_v3. A sandbox subscription may not have quota for
+# either. Shrink both for a cheap smoke test:
+# win_vm_size   = "Standard_B2ms"
+# win_vm_size_2 = "Standard_B2ms"
+# win_disk_sizes = {
+#   data   = 128
+#   log    = 64
+#   tempdb = 64
+#   backup = 128
+# }
+
+# Rescue lever for the storage firewall. Once the account is locked to Deny, an
+# apply from a different client IP fails while refreshing the container/blob data
+# plane. Recover with `terraform apply -var=storage_default_action=Allow`, then
+# apply again normally.
+# storage_default_action = "Deny"
+
+# The ~119 MB DP-300 lab archive. Path is relative to this directory. The blob
+# resource is skipped automatically when the file is absent.
+# lab_archive_path = "../docs/lab-files/dp-300-database-administrator-master.zip"

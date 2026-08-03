@@ -1,12 +1,21 @@
 .terraform/
 *.tfvars
-*.tfstate
-*.tfstate.backup
+
+# Terraform state, in every form it is written to disk.
+#
+# The glob is `*.tfstate*`, not the `*.tfstate` + `*.tfstate.backup` pair that used
+# to be here. That pair missed the file Terraform writes when it MIGRATES a backend:
+# `terraform.tfstate.<unix-timestamp>.backup`, which matches neither pattern. One
+# such file (terraform_flat/terraform.tfstate.1785584963.backup) reached a commit and
+# GitHub push protection rejected the push — a state file embeds live storage account
+# keys and every other sensitive attribute in plaintext.
+#
+# `*.tfstate*` also covers .tfstate.lock.info and any future suffix Terraform adds.
+*.tfstate*
+
 crash.log
 .venv
 collections
-*.tfstate
-*.tfstate.backup
 .backups/
 .vault_pass
 .env
